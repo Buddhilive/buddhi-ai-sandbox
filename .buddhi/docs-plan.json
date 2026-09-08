@@ -1,1 +1,61 @@
-[]
+[
+  {
+    "node_id": "function:.agents/hooks/guard_destructive.py::extract_command",
+    "kind": "function",
+    "name": "extract_command",
+    "qualified_name": "extract_command",
+    "file_path": ".agents/hooks/guard_destructive.py",
+    "language": "python",
+    "start_line": 88,
+    "end_line": 121,
+    "snippet": "def extract_command(payload):\n    \"\"\"Pull the shell command string out of a tool-call payload, if any.\n\n    The field holding the command text varies by tool/hook shape, so check\n    a few known locations in order. This hook only ever backstops\n    shell/terminal-command-shaped tool calls (run_command, git-specialist\n    shells out, etc.) \u2014 if none of those fields are present (or the payload\n    isn't a dict), this is not a command invocation at all (e.g. a Write/Edit\n    of file content), and there is nothing to safely pattern-match against:\n    return None rather than stringifying the whole payload, which would\n    otherwise deny file writes whose *content* merely mentions a destructive\n    command (including this harness's own rule docs).\n    \"\"\"\n    if isinstance(payload, dict):\n        for key in (\"command\", \"cmd\"):\n            value = payload.get(key)\n            if isinstance(value, str):\n                return value\n\n        for outer_key, inner_key in (\n            (\"input\", \"command\"),\n            (\"tool_input\", \"command\"),\n            (\"parameters\", \"command\"),\n            (\"input\", \"cmd\"),\n            (\"tool_input\", \"cmd\"),\n            (\"parameters\", \"cmd\"),\n        ):\n            outer = payload.get(outer_key)\n            if isinstance(outer, dict):\n                inner = outer.get(inner_key)\n                if isinstance(inner, str):\n                    return inner\n\n    return None",
+    "content_hash": "2ab0f43d754a4ad035b45eacec41f7d4ea720a0b2a43714ae3331205d64ef141",
+    "parent_id": "file:.agents/hooks/guard_destructive.py",
+    "callers": [
+      "function:.agents/hooks/guard_destructive.py::decide"
+    ],
+    "callees": [],
+    "doc_path": ".buddhi/docs/.agents/hooks/guard_destructive/extract_command.md",
+    "needs_generation": true
+  },
+  {
+    "node_id": "function:.agents/hooks/guard_destructive.py::decide",
+    "kind": "function",
+    "name": "decide",
+    "qualified_name": "decide",
+    "file_path": ".agents/hooks/guard_destructive.py",
+    "language": "python",
+    "start_line": 124,
+    "end_line": 138,
+    "snippet": "def decide(payload):\n    command = extract_command(payload)\n    if command is None:\n        # Not a shell/terminal-command-shaped tool call \u2014 nothing to check,\n        # so fail open rather than scanning unrelated payloads (file content,\n        # etc.) against command deny-patterns.\n        return {\"decision\": \"allow\"}\n\n    for pattern, reason, confirmable in DENY_RULES:\n        if pattern.search(command):\n            if confirmable and CONFIRMED_MARKER in command:\n                continue\n            return {\"decision\": \"deny\", \"reason\": reason}\n\n    return {\"decision\": \"allow\"}",
+    "content_hash": "6e931688b52557d482090c1726920914bd66b62d79cba667b86e3d3fe55cc009",
+    "parent_id": "file:.agents/hooks/guard_destructive.py",
+    "callers": [
+      "function:.agents/hooks/guard_destructive.py::main"
+    ],
+    "callees": [
+      "function:.agents/hooks/guard_destructive.py::extract_command"
+    ],
+    "doc_path": ".buddhi/docs/.agents/hooks/guard_destructive/decide.md",
+    "needs_generation": true
+  },
+  {
+    "node_id": "function:.agents/hooks/guard_destructive.py::main",
+    "kind": "function",
+    "name": "main",
+    "qualified_name": "main",
+    "file_path": ".agents/hooks/guard_destructive.py",
+    "language": "python",
+    "start_line": 141,
+    "end_line": 151,
+    "snippet": "def main():\n    try:\n        raw = sys.stdin.read()\n        payload = json.loads(raw)\n        result = decide(payload)\n    except Exception:  # noqa: BLE001 - must never block tool use on this hook's own bugs\n        # Never block tool use because this hook itself is broken or the\n        # input was malformed/non-JSON.\n        result = {\"decision\": \"allow\"}\n\n    print(json.dumps(result))",
+    "content_hash": "50e43ce8faa5abf53d410b09440fe1da60c0d32813d5c9991b38310f10e56c70",
+    "parent_id": "file:.agents/hooks/guard_destructive.py",
+    "callers": [],
+    "callees": [
+      "function:.agents/hooks/guard_destructive.py::decide"
+    ],
+    "doc_path": ".buddhi/docs/.agents/hooks/guard_destructive/main.md",
+    "needs_generation": true
+  }
+]

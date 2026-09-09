@@ -11,7 +11,7 @@ This document outlines how packages in the `buddhi-ai-sandbox` monorepo are buil
 | **`@buddhilive/sandbox`** | `packages/sdk` | Web apps, browser-based IDEs, AI agent runners, tutorials | NPM Registry, CDNs (`esm.sh`, `jsdelivr`, `unpkg`) |
 | **`@buddhilive/sandbox-sw`** | `packages/service-worker` | Apps rendering in-browser web server previews in `<iframe>` | NPM Registry, CDNs |
 | **`@buddhilive/sandbox-toolchain`** | `packages/toolchain-bundle` | Apps requiring on-demand `node-gyp` native addon builds | NPM Registry, CDNs (lazy dynamic import) |
-| **`buddhilive-sandbox-core`** | `packages/wasm-core` | Internal engine compiled to WebAssembly via `wasm-pack` | Embedded directly into `@buddhilive/sandbox` |
+| **`buddhilive-sandbox-core`** | `packages/wasm-core` | Internal engine compiled to WebAssembly via `wasm-pack` | Embedded directly into `@buddhilive/sandbox` (`"private": true`) |
 
 ---
 
@@ -23,7 +23,10 @@ This document outlines how packages in the `buddhi-ai-sandbox` monorepo are buil
   - `dist/index.cjs` (CommonJS bundle)
   - `dist/index.d.ts` (Complete rolled-up TypeScript declarations)
 - **Target Size**: Under **20 KB** gzipped (uncompressed ~70 KB).
-- **Zero Configuration**: Bundles the Web Worker inline so consumer apps (Next.js, Vite, Nuxt, Webpack) do not need complex asset loaders or worker plugins.
+- **Dual WebAssembly Loading Architecture**:
+  - **Zero-Configuration Inline Mode (Default)**: Bundles the Web Worker and WebAssembly core binary inline so consumer apps (Next.js, Vite, Nuxt, Webpack) and CDNs require zero bundler configuration, worker plugins, or external asset rules.
+  - **External WASM Asset Mode (`wasmUrl`)**: Consumers who prefer browser HTTP caching, streaming WebAssembly compilation, or visibility in browser DevTools Network tabs can host `buddhilive_sandbox_core_bg.wasm` in their public static assets directory or CDN and supply `{ wasmUrl: '/buddhilive_sandbox_core_bg.wasm' }` to `Sandbox.create()`.
+- **Runtime Dependencies**: Only `fflate` is an external runtime dependency. Internal monorepo modules (`buddhilive-sandbox-core` and `@buddhilive/sandbox-toolchain`) are build-time `devDependencies` bundled directly into the distributable.
 
 ### 2. `@buddhilive/sandbox-sw`
 - **Output Artifacts**:
@@ -47,20 +50,21 @@ Execute the full build and verification pipeline before publishing:
 # 1. Install all dependencies
 pnpm install
 
-# 2. Build Rust WebAssembly Core
+# 2. Build Rust WebAssembly Core (outputs to packages/wasm-core/pkg)
 cd packages/wasm-core
 wasm-pack build --target web --out-dir pkg
 cd ../..
 
-# 3. Build all TypeScript packages
+# 3. Build all TypeScript packages (embeds WASM core into @buddhilive/sandbox)
 pnpm run build
 
 # 4. Verify typecheck
 pnpm --filter=@buddhilive/sandbox run typecheck
 
-# 5. Run unit tests and browser E2E tests
-pnpm test:unit
-pnpm test:e2e
+# 5. Run unit tests, Cargo tests, and browser E2E tests
+pnpm test:wasm
+pnpm --filter=@buddhilive/sandbox run test:unit
+pnpm --filter=@buddhilive/sandbox run test:e2e
 ```
 
 ---
@@ -79,11 +83,11 @@ npm whoami
 For automated CI environments, ensure `NPM_TOKEN` is configured in repository secrets with publishing permissions.
 
 ### 2. Versioning
-Bump version numbers in all packages consistently:
+Bump version numbers in all public packages consistently:
 
 ```bash
 # Example: Minor release
-pnpm -r exec npm version minor --no-git-tag-version
+pnpm -r --filter=!sandbox-demo --filter=!buddhilive-sandbox-core exec npm version minor --no-git-tag-version
 ```
 
 ### 3. Publishing Workspace Packages
@@ -93,11 +97,16 @@ Publish all public packages with public access:
 pnpm -r --filter=!sandbox-demo publish --access public
 ```
 
+> **Note**: `packages/wasm-core` is marked `"private": true` in `packages/wasm-core/package.json`. `pnpm publish` automatically skips private packages and publishes only:
+> - `@buddhilive/sandbox`
+> - `@buddhilive/sandbox-sw`
+> - `@buddhilive/sandbox-toolchain`
+
 ---
 
 ## CDN Distribution
 
-Once published to npm, `@buddhilive/sandbox` is immediately accessible through modern JavaScript CDNs:
+Once published to npm, `@buddhilive/sandbox` is immediately accessible through modern JavaScript CDNs with zero configuration:
 
 ### esm.sh
 ```html
@@ -121,6 +130,7 @@ Once published to npm, `@buddhilive/sandbox` is immediately accessible through m
 
 ## Host Environment Requirements for Consumers
 
+### 1. Cross-Origin Isolation (Required for SharedArrayBuffer)
 When integrating `@buddhilive/sandbox` into production applications, the host web server must provide Cross-Origin Isolation headers to enable `SharedArrayBuffer` support:
 
 ```http
@@ -128,9 +138,9 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-### Framework Examples
+#### Framework Examples:
 
-#### Next.js (`next.config.js`)
+##### Next.js (`next.config.js`)
 ```javascript
 module.exports = {
   async headers() {
@@ -147,7 +157,7 @@ module.exports = {
 };
 ```
 
-#### Vite (`vite.config.ts`)
+##### Vite (`vite.config.ts`)
 ```typescript
 import { defineConfig } from 'vite';
 
@@ -160,6 +170,25 @@ export default defineConfig({
   },
 });
 ```
+
+---
+
+### 2. Optional: External WebAssembly Binary Serving (`wasmUrl`)
+
+By default, `@buddhilive/sandbox` requires no asset configuration. However, if a consumer prefers to host the `.wasm` file externally:
+
+1. Copy `buddhilive_sandbox_core_bg.wasm` into the host project's public static assets directory (e.g. `public/` in Vite, Next.js, or Nuxt).
+2. Pass `wasmUrl` to `Sandbox.create()`:
+
+```typescript
+import { Sandbox } from '@buddhilive/sandbox';
+
+const sandbox = await Sandbox.create({
+  wasmUrl: '/buddhilive_sandbox_core_bg.wasm',
+});
+```
+
+This instructs the worker to fetch and compile the WebAssembly module via HTTP GET from the specified URL instead of the embedded inline binary.
 
 ---
 
@@ -192,8 +221,10 @@ jobs:
           targets: wasm32-unknown-unknown
       - run: cargo install wasm-pack
       - run: pnpm install --frozen-lockfile
+      - run: cd packages/wasm-core && wasm-pack build --target web --out-dir pkg && cd ../..
       - run: pnpm run build
-      - run: pnpm test:unit
+      - run: pnpm test:wasm
+      - run: pnpm --filter=@buddhilive/sandbox run test:unit
       - run: pnpm -r --filter=!sandbox-demo publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

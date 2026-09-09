@@ -13,6 +13,8 @@ export interface SandboxOptions {
   persistenceAdapter?: 'opfs' | 'indexeddb' | null;
   /** Optional URL or custom path to sandbox.worker.js */
   workerUrl?: string;
+  /** Optional URL or custom path to WebAssembly core binary */
+  wasmUrl?: string;
 }
 
 export interface FileStat {

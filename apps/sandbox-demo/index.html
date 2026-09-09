@@ -3,123 +3,253 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>BuddhiLive Sandbox Demo</title>
+    <title>BuddhiLive Sandbox Demo - Client-Side Node.js & WebAssembly</title>
     <style>
+      :root {
+        --bg-dark: #090d16;
+        --surface: #0f172a;
+        --surface-panel: #1e293b;
+        --border: #334155;
+        --primary: #0284c7;
+        --primary-hover: #0369a1;
+        --accent: #38bdf8;
+        --text-main: #f8fafc;
+        --text-muted: #94a3b8;
+        --success: #10b981;
+      }
+      * {
+        box-sizing: border-box;
+      }
       body {
         margin: 0;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-        background: #0f172a;
-        color: #f8fafc;
+        background: var(--surface);
+        color: var(--text-main);
         display: flex;
         flex-direction: column;
         height: 100vh;
+        overflow: hidden;
       }
       header {
-        padding: 1rem 1.5rem;
-        background: #1e293b;
-        border-bottom: 1px solid #334155;
+        padding: 0.75rem 1.5rem;
+        background: var(--surface-panel);
+        border-bottom: 1px solid var(--border);
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      .header-left {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
       }
       h1 {
         margin: 0;
-        font-size: 1.25rem;
+        font-size: 1.15rem;
         font-weight: 600;
+        letter-spacing: -0.01em;
       }
       .badge {
         font-size: 0.75rem;
-        padding: 0.25rem 0.5rem;
+        padding: 0.2rem 0.55rem;
         border-radius: 9999px;
-        background: #0ea5e9;
-        color: white;
+        background: rgba(14, 165, 233, 0.2);
+        color: var(--accent);
+        border: 1px solid rgba(56, 189, 248, 0.3);
+        font-weight: 500;
+      }
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+      }
+      .example-picker {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+      }
+      select {
+        background: var(--surface);
+        color: var(--text-main);
+        border: 1px solid var(--border);
+        padding: 0.35rem 0.65rem;
+        border-radius: 0.375rem;
+        font-size: 0.85rem;
+        outline: none;
+        cursor: pointer;
+        transition: border-color 0.15s;
+      }
+      select:focus {
+        border-color: var(--accent);
+      }
+      #status {
+        font-size: 0.825rem;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      #status::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--success);
       }
       main {
         flex: 1;
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 1rem;
-        padding: 1rem;
+        grid-template-columns: 1.1fr 1fr 1fr;
+        gap: 0.75rem;
+        padding: 0.75rem;
         overflow: hidden;
       }
+      @media (max-width: 1024px) {
+        main {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 768px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
       .panel {
-        background: #1e293b;
-        border: 1px solid #334155;
+        background: var(--surface-panel);
+        border: 1px solid var(--border);
         border-radius: 0.5rem;
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        min-height: 0;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
       }
       .panel-header {
-        padding: 0.75rem 1rem;
-        background: #0f172a;
-        border-bottom: 1px solid #334155;
+        padding: 0.6rem 0.85rem;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
         font-weight: 600;
-        font-size: 0.875rem;
+        font-size: 0.825rem;
         display: flex;
         justify-content: space-between;
         align-items: center;
+        color: #cbd5e1;
+      }
+      .panel-header .title {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
       }
       .editor, .terminal {
         flex: 1;
-        padding: 1rem;
+        padding: 0.85rem;
         margin: 0;
-        font-family: "Cascadia Code", "Fira Code", monospace;
-        font-size: 0.875rem;
-        color: #f8fafc;
-        background: #090d16;
+        font-family: "Cascadia Code", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.825rem;
+        line-height: 1.5;
+        color: var(--text-main);
+        background: var(--bg-dark);
         overflow: auto;
         resize: none;
         border: none;
         outline: none;
       }
       .terminal {
-        color: #38bdf8;
+        color: var(--accent);
         white-space: pre-wrap;
       }
-      button {
-        background: #2563eb;
-        color: white;
-        border: none;
-        padding: 0.375rem 0.75rem;
-        border-radius: 0.25rem;
-        font-size: 0.875rem;
-        cursor: pointer;
-        font-weight: 500;
-      }
-      button:hover {
-        background: #1d4ed8;
+      .preview-container {
+        flex: 1;
+        background: #ffffff;
+        display: flex;
+        flex-direction: column;
+        position: relative;
       }
       iframe#preview {
         flex: 1;
+        width: 100%;
+        height: 100%;
         border: none;
-        background: white;
+        background: #ffffff;
+      }
+      .btn {
+        background: var(--primary);
+        color: white;
+        border: none;
+        padding: 0.35rem 0.75rem;
+        border-radius: 0.3rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background 0.15s, opacity 0.15s;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .btn:hover:not(:disabled) {
+        background: var(--primary-hover);
+      }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .btn-secondary {
+        background: #334155;
+        color: #e2e8f0;
+      }
+      .btn-secondary:hover:not(:disabled) {
+        background: #475569;
       }
     </style>
   </head>
   <body>
     <header>
-      <h1>BuddhiLive Sandbox Demo <span class="badge">Client-Side Node.js</span></h1>
-      <div id="status">Sandbox: Initializing...</div>
+      <div class="header-left">
+        <h1>BuddhiLive Sandbox</h1>
+        <span class="badge">WebAssembly & Node.js</span>
+      </div>
+      <div class="header-right">
+        <div class="example-picker">
+          <label for="example-select">Example:</label>
+          <select id="example-select">
+            <option value="fs">Node.js File System (fs)</option>
+            <option value="ui">HTML / UI Generator & Preview</option>
+            <option value="http">Virtual HTTP Server</option>
+          </select>
+        </div>
+        <div id="status">Sandbox: Initializing...</div>
+      </div>
     </header>
     <main>
       <div class="panel">
         <div class="panel-header">
-          <span>JavaScript File: /index.js</span>
-          <button id="run-btn">Run Script</button>
+          <span class="title">📄 Script: /workspace/index.js</span>
+          <button id="run-btn" class="btn" disabled>▶ Run Script</button>
         </div>
-        <textarea id="code-editor" class="editor" spellcheck="false">// In-browser Node.js execution
-console.log("Hello from inside the client-side Node.js Sandbox!");
-console.log("Process version:", process.version);
-console.log("Platform:", process.platform);
-</textarea>
+        <textarea id="code-editor" class="editor" spellcheck="false"></textarea>
       </div>
+
       <div class="panel">
         <div class="panel-header">
-          <span>Terminal Output</span>
-          <button id="clear-btn">Clear</button>
+          <span class="title">💻 Terminal Output</span>
+          <button id="clear-btn" class="btn btn-secondary">Clear</button>
         </div>
         <pre id="terminal-output" class="terminal"></pre>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span class="title">🌐 Live UI Preview</span>
+          <button id="refresh-preview-btn" class="btn btn-secondary">Refresh UI</button>
+        </div>
+        <div class="preview-container">
+          <iframe id="preview" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+        </div>
       </div>
     </main>
     <script type="module" src="/src/main.ts"></script>

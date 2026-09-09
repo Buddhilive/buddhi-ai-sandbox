@@ -1,7 +1,20 @@
 import { WorkerInboundMessage, WorkerOutboundMessage } from '../types.js';
+import initWasm, {
+  sandbox_init,
+  vfs_write_file,
+  vfs_read_file,
+  vfs_mkdir,
+  vfs_readdir,
+  vfs_rm,
+  vfs_stat,
+  vfs_symlink,
+} from 'buddhilive-sandbox-core';
+// @ts-ignore
+import wasmUrl from 'buddhilive-sandbox-core/buddhilive_sandbox_core_bg.wasm?url';
 
 // Worker state
 let initialized = false;
+let wasmReady = false;
 let options: any = {};
 
 // In-worker in-memory virtual filesystem fallback and bindings
@@ -110,6 +123,19 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
     switch (msg.type) {
       case 'init': {
         options = msg.options || {};
+        try {
+          const targetWasm = options.wasmUrl || wasmUrl;
+          if (targetWasm) {
+            await initWasm(targetWasm);
+          } else {
+            await initWasm();
+          }
+          sandbox_init();
+          wasmReady = true;
+        } catch (e) {
+          console.warn('[Sandbox Worker] WebAssembly runtime fallback to in-memory VFS:', e);
+        }
+
         initialized = true;
         // Default standard directories
         const ensureDir = (p: string) => {
@@ -120,6 +146,11 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
               curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
             }
             curr = curr.children!.get(part)!;
+          }
+          if (wasmReady) {
+            try {
+              vfs_mkdir(p, true);
+            } catch (_) {}
           }
         };
         ensureDir('/workspace');
@@ -132,16 +163,22 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
       case 'fs:write': {
         const { id, path, data } = msg;
+        const u8 = new Uint8Array(data);
         const { parent, name } = resolveNode(path);
         if (!parent || !name) {
           throw new Error(`ENOENT: cannot write to path ${path}`);
         }
         parent.children!.set(name, {
           isDir: false,
-          data: new Uint8Array(data),
+          data: u8,
           mtime: Date.now(),
           mode: 0o644,
         });
+        if (wasmReady) {
+          try {
+            vfs_write_file(path, u8);
+          } catch (_) {}
+        }
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -149,26 +186,42 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       case 'fs:read': {
         const { id, path } = msg;
         const { node } = resolveNode(path);
-        if (!node || node.isDir) {
-          throw new Error(`ENOENT or EISDIR on ${path}`);
+        if (!node || node.isDir || !node.data) {
+          throw new Error(`ENOENT: no such file or directory, '${path}'`);
         }
-        self.postMessage({ type: 'fs:response', id, result: node.data } as WorkerOutboundMessage);
+        self.postMessage({
+          type: 'fs:response',
+          id,
+          result: node.data,
+        } as WorkerOutboundMessage);
         break;
       }
 
       case 'fs:mkdir': {
         const { id, path, recursive } = msg;
-        const parts = normalizePath(path);
-        let curr = rootNode;
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
-          if (!curr.children!.has(part)) {
-            if (!recursive && i < parts.length - 1) {
-              throw new Error(`ENOENT: no such parent directory`);
+        if (recursive) {
+          const parts = normalizePath(path);
+          let curr = rootNode;
+          for (const part of parts) {
+            if (!curr.children!.has(part)) {
+              curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
             }
-            curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+            curr = curr.children!.get(part)!;
           }
-          curr = curr.children!.get(part)!;
+        } else {
+          const { parent, name } = resolveNode(path);
+          if (!parent || !name) {
+            throw new Error(`ENOENT: cannot create directory '${path}'`);
+          }
+          if (parent.children!.has(name)) {
+            throw new Error(`EEXIST: file or directory already exists, '${path}'`);
+          }
+          parent.children!.set(name, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+        }
+        if (wasmReady) {
+          try {
+            vfs_mkdir(path, !!recursive);
+          } catch (_) {}
         }
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
@@ -177,10 +230,10 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       case 'fs:readdir': {
         const { id, path } = msg;
         const { node } = resolveNode(path);
-        if (!node || !node.isDir) {
+        if (!node || !node.isDir || !node.children) {
           throw new Error(`ENOTDIR: not a directory, '${path}'`);
         }
-        const entries = Array.from(node.children!.keys());
+        const entries = Array.from(node.children.keys());
         self.postMessage({ type: 'fs:response', id, result: entries } as WorkerOutboundMessage);
         break;
       }
@@ -212,6 +265,11 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         if (parent && name && parent.children!.has(name)) {
           parent.children!.delete(name);
         }
+        if (wasmReady) {
+          try {
+            vfs_rm(path, !!msg.recursive);
+          } catch (_) {}
+        }
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -226,6 +284,11 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             mtime: Date.now(),
             mode: 0o777,
           });
+        }
+        if (wasmReady) {
+          try {
+            vfs_symlink(target, path);
+          } catch (_) {}
         }
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
@@ -296,6 +359,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                 version: 'v20.12.0',
                 platform: 'browser-wasm',
                 pid,
+                cwd: () => '/workspace',
                 stdout: {
                   write: (str: string) => writeToRingBuffer(sabStdout, String(str)),
                 },
@@ -308,8 +372,164 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                 env: { NODE_ENV: 'development', PATH: '/node_modules/.bin' },
               };
 
+              // Virtual fs built-in module
+              const virtualFs = {
+                writeFileSync: (filePath: string, data: string | Uint8Array, options?: any) => {
+                  const encoded = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+                  const { parent, name } = resolveNode(filePath);
+                  if (!parent || !name) throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
+                  parent.children!.set(name, {
+                    isDir: false,
+                    data: encoded,
+                    mtime: Date.now(),
+                    mode: 0o644,
+                  });
+                  if (wasmReady) {
+                    try { vfs_write_file(filePath, encoded); } catch (_) {}
+                  }
+                },
+                readFileSync: (filePath: string, options?: any) => {
+                  const { node } = resolveNode(filePath);
+                  if (!node || node.isDir || !node.data) {
+                    throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
+                  }
+                  const encoding = typeof options === 'string' ? options : options?.encoding;
+                  if (encoding === 'utf8' || encoding === 'utf-8') {
+                    return new TextDecoder().decode(node.data);
+                  }
+                  return node.data;
+                },
+                readdirSync: (dirPath: string) => {
+                  const { node } = resolveNode(dirPath);
+                  if (!node || !node.isDir || !node.children) {
+                    throw new Error(`ENOTDIR: not a directory, scandir '${dirPath}'`);
+                  }
+                  return Array.from(node.children.keys());
+                },
+                statSync: (filePath: string) => {
+                  const { node } = resolveNode(filePath);
+                  if (!node) {
+                    throw new Error(`ENOENT: no such file or directory, stat '${filePath}'`);
+                  }
+                  return {
+                    isFile: () => !node.isDir && !node.target,
+                    isDirectory: () => node.isDir,
+                    isSymbolicLink: () => !!node.target,
+                    size: node.data ? node.data.byteLength : 4096,
+                    mtimeMs: node.mtime,
+                    mode: node.mode,
+                  };
+                },
+                existsSync: (filePath: string) => {
+                  try {
+                    const { node } = resolveNode(filePath);
+                    return !!node;
+                  } catch (_) {
+                    return false;
+                  }
+                },
+                mkdirSync: (dirPath: string, options?: any) => {
+                  const recursive = typeof options === 'boolean' ? options : options?.recursive || false;
+                  if (recursive) {
+                    const parts = normalizePath(dirPath);
+                    let curr = rootNode;
+                    for (const part of parts) {
+                      if (!curr.children!.has(part)) {
+                        curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+                      }
+                      curr = curr.children!.get(part)!;
+                    }
+                  } else {
+                    const { parent, name } = resolveNode(dirPath);
+                    if (!parent || !name) throw new Error(`ENOENT: no such file or directory, mkdir '${dirPath}'`);
+                    if (parent.children!.has(name)) throw new Error(`EEXIST: file already exists, mkdir '${dirPath}'`);
+                    parent.children!.set(name, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+                  }
+                  if (wasmReady) {
+                    try { vfs_mkdir(dirPath, !!(options?.recursive)); } catch (_) {}
+                  }
+                },
+                unlinkSync: (filePath: string) => {
+                  const { parent, name } = resolveNode(filePath);
+                  if (parent && name && parent.children!.has(name)) {
+                    parent.children!.delete(name);
+                    if (wasmReady) {
+                      try { vfs_rm(filePath, false); } catch (_) {}
+                    }
+                  } else {
+                    throw new Error(`ENOENT: no such file or directory, unlink '${filePath}'`);
+                  }
+                },
+                promises: {
+                  writeFile: async (p: string, d: string | Uint8Array, opt?: any) => virtualFs.writeFileSync(p, d, opt),
+                  readFile: async (p: string, opt?: any) => virtualFs.readFileSync(p, opt),
+                  readdir: async (p: string) => virtualFs.readdirSync(p),
+                  stat: async (p: string) => virtualFs.statSync(p),
+                  mkdir: async (p: string, opt?: any) => virtualFs.mkdirSync(p, opt),
+                  unlink: async (p: string) => virtualFs.unlinkSync(p),
+                },
+              };
+
+              // Virtual path built-in module
+              const virtualPath = {
+                join: (...segments: string[]) => {
+                  const parts: string[] = [];
+                  for (const s of segments) {
+                    for (const p of String(s).split('/')) {
+                      if (p === '..') parts.pop();
+                      else if (p && p !== '.') parts.push(p);
+                    }
+                  }
+                  return (segments[0]?.startsWith('/') ? '/' : '') + parts.join('/');
+                },
+                resolve: (...segments: string[]) => {
+                  const parts: string[] = [];
+                  for (const s of segments) {
+                    const str = String(s);
+                    if (str.startsWith('/')) parts.length = 0;
+                    for (const p of str.split('/')) {
+                      if (p === '..') parts.pop();
+                      else if (p && p !== '.') parts.push(p);
+                    }
+                  }
+                  return '/' + parts.join('/');
+                },
+                basename: (p: string, ext?: string) => {
+                  const seg = String(p).split('/').filter(Boolean).pop() || '';
+                  return ext && seg.endsWith(ext) ? seg.slice(0, -ext.length) : seg;
+                },
+                dirname: (p: string) => {
+                  const seg = String(p).split('/').filter(Boolean);
+                  seg.pop();
+                  return '/' + seg.join('/');
+                },
+                extname: (p: string) => {
+                  const base = String(p).split('/').filter(Boolean).pop() || '';
+                  const idx = base.lastIndexOf('.');
+                  return idx > 0 ? base.slice(idx) : '';
+                },
+              };
+
+              // Virtual http built-in module
+              const virtualHttp = {
+                createServer: (handler: (req: any, res: any) => void) => ({
+                  listen: (port: number, callback?: () => void) => {
+                    self.postMessage({ type: 'port:listen', port } as WorkerOutboundMessage);
+                    if (callback) setTimeout(callback, 0);
+                  },
+                  close: (callback?: () => void) => {
+                    self.postMessage({ type: 'port:close', port: 3000 } as WorkerOutboundMessage);
+                    if (callback) setTimeout(callback, 0);
+                  },
+                }),
+              };
+
               // Virtual require
               const virtualRequire = (mod: string) => {
+                if (mod === 'fs' || mod === 'node:fs') return virtualFs;
+                if (mod === 'path' || mod === 'node:path') return virtualPath;
+                if (mod === 'http' || mod === 'node:http') return virtualHttp;
+
                 // Check if mod is local or in node_modules
                 let targetFile = mod;
                 if (!mod.startsWith('.') && !mod.startsWith('/')) {

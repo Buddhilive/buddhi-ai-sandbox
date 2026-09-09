@@ -52,7 +52,8 @@
 - **Run local demo**: `pnpm dev` (serves `apps/sandbox-demo` at `http://localhost:5173` with COOP/COEP headers)
 
 ### Testing
-- **Unit Tests (Vitest)**: `pnpm --filter=@buddhilive/sandbox run test:unit`
+- **WASM Core Unit/Integration Tests (Cargo)**: `pnpm test:wasm` (or `cd packages/wasm-core && cargo test`)
+- **SDK Unit Tests (Vitest)**: `pnpm --filter=@buddhilive/sandbox run test:unit`
 - **E2E Browser Tests (Playwright)**: `pnpm --filter=@buddhilive/sandbox run test:e2e`
 
 ### Rust WebAssembly Build

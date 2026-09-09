@@ -8,9 +8,24 @@ pub struct FileMeta {
     pub ctime_ms: f64,
 }
 
+pub fn current_time_ms() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64() * 1000.0)
+            .unwrap_or(0.0)
+    }
+}
+
 impl FileMeta {
     pub fn new_file(mode: u32) -> Self {
-        let now = js_sys::Date::now();
+        let now = current_time_ms();
         Self {
             mode,
             size: 0,
@@ -20,7 +35,7 @@ impl FileMeta {
     }
 
     pub fn new_dir(mode: u32) -> Self {
-        let now = js_sys::Date::now();
+        let now = current_time_ms();
         Self {
             mode,
             size: 4096,
@@ -30,7 +45,7 @@ impl FileMeta {
     }
 
     pub fn new_symlink() -> Self {
-        let now = js_sys::Date::now();
+        let now = current_time_ms();
         Self {
             mode: 0o777,
             size: 0,

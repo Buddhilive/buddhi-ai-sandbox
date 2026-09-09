@@ -84,6 +84,10 @@ pnpm run build
 ### Running Tests
 
 ```bash
+# Run Rust WebAssembly Core tests (Cargo)
+pnpm test:wasm
+# Or directly: cd packages/wasm-core && cargo test
+
 # Run unit tests across all packages (Vitest)
 pnpm test:unit
 

@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm -r --filter=!sandbox-demo run build",
     "test": "pnpm -r run test",
+    "test:wasm": "cargo test --manifest-path packages/wasm-core/Cargo.toml",
     "test:unit": "pnpm --filter=@buddhilive/sandbox run test:unit",
     "test:e2e": "pnpm --filter=@buddhilive/sandbox run test:e2e",
     "dev": "pnpm --filter=sandbox-demo run dev",

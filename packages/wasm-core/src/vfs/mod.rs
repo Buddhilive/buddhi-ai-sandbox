@@ -2,7 +2,7 @@ pub mod file;
 pub mod inode;
 pub mod symlink;
 
-use self::file::{FileMeta, INodeKind};
+use self::file::{current_time_ms, FileMeta, INodeKind};
 use self::inode::{InodeTable, ROOT_INODE_ID};
 use self::symlink::{normalize_path, resolve_path};
 use crate::error::{Result, SandboxError};
@@ -42,7 +42,7 @@ impl VirtualFS {
                     buf.clear();
                     buf.extend_from_slice(data);
                     node.meta.size = data.len() as u64;
-                    node.meta.mtime_ms = js_sys::Date::now();
+                    node.meta.mtime_ms = current_time_ms();
                     return Ok(());
                 }
                 INodeKind::Directory { .. } => {
@@ -56,7 +56,7 @@ impl VirtualFS {
                         buf.clear();
                         buf.extend_from_slice(data);
                         target_node.meta.size = data.len() as u64;
-                        target_node.meta.mtime_ms = js_sys::Date::now();
+                        target_node.meta.mtime_ms = current_time_ms();
                         return Ok(());
                     } else {
                         return Err(SandboxError::IsADirectory(path.to_string()));
@@ -69,7 +69,7 @@ impl VirtualFS {
         let dir_node = self.table.get_mut(dir_id)?;
         if let INodeKind::Directory { children } = &mut dir_node.kind {
             children.insert(filename.clone(), file_id);
-            dir_node.meta.mtime_ms = js_sys::Date::now();
+            dir_node.meta.mtime_ms = current_time_ms();
         }
 
         Ok(())

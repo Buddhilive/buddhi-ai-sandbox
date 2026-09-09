@@ -1,0 +1,50 @@
+{
+  "name": "@buddhilive/sandbox",
+  "version": "0.1.0",
+  "description": "Client-side Node.js sandbox running entirely in WebAssembly & Web Workers",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@buddhilive/sandbox-toolchain": "workspace:*",
+    "@playwright/test": "^1.44.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vite-plugin-dts": "^3.9.1",
+    "vitest": "^1.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "sandbox",
+    "nodejs",
+    "wasm",
+    "webassembly",
+    "virtual-filesystem",
+    "web-worker",
+    "client-side"
+  ],
+  "author": "BuddhiLive",
+  "license": "MIT"
+}

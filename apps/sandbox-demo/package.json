@@ -1,0 +1,19 @@
+{
+  "name": "sandbox-demo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@buddhilive/sandbox": "workspace:*",
+    "@buddhilive/sandbox-sw": "workspace:*",
+    "@buddhilive/sandbox-toolchain": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  }
+}

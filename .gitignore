@@ -1,0 +1,9 @@
+node_modules
+dist
+pkg
+target
+.turbo
+.cache
+test-results
+playwright-report
+*.log

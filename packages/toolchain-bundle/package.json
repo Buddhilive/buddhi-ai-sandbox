@@ -1,0 +1,33 @@
+{
+  "name": "@buddhilive/sandbox-toolchain",
+  "version": "0.1.0",
+  "description": "On-demand native compilation toolchain (Python + Clang WASM) for client-side Node.js sandbox",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "wasm"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11",
+    "vite-plugin-dts": "^3.9.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}

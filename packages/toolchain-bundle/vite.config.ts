@@ -16,5 +16,8 @@ export default defineConfig({
       fileName: () => 'index.js',
       formats: ['es'],
     },
+    rollupOptions: {
+      external: ['esbuild-wasm', 'wa-sqlite'],
+    },
   },
 });

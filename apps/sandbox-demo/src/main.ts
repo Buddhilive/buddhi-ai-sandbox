@@ -195,6 +195,77 @@ server.listen(PORT, () => {
   console.log(\`✓ Preview bridge route: /__preview/\${PORT}/\`);
 });
 `,
+
+  nextjs: `// Next.js 16 App Router & Server Simulation in Sandbox
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+console.log("=== Next.js 16 App Router on BuddhiLive Sandbox ===");
+console.log("Process version:", process.version);
+console.log("Platform:", process.platform);
+
+// 1. Emulate Next.js App Router Page & API Handler
+const PORT = 3000;
+const server = http.createServer((req, res) => {
+  console.log(\`[\${new Date().toLocaleTimeString()}] \${req.method} \${req.url}\`);
+
+  if (req.url === '/api/hello') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      message: 'Hello from Next.js 16 API Route in WebAssembly Sandbox!',
+      runtime: 'client-side-wasm',
+      timestamp: new Date().toISOString()
+    }));
+    return;
+  }
+
+  // React Server Component (RSC) rendered output
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'X-Powered-By': 'Next.js 16 (BuddhiLive Sandbox WASM)'
+  });
+
+  res.end(\`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Next.js 16 App Router Preview</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #ededed; margin: 0; padding: 2rem; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; }
+    .card { background: #141414; border: 1px solid #262626; border-radius: 12px; padding: 2rem; max-width: 500px; width: 100%; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+    h1 { font-size: 1.5rem; margin-top: 0; color: #ffffff; display: flex; align-items: center; gap: 0.5rem; }
+    .badge { background: #0070f3; color: white; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 9999px; font-weight: 600; }
+    p { color: #a1a1aa; line-height: 1.6; }
+    button { background: white; color: black; border: none; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+    button:hover { opacity: 0.9; }
+    pre { background: #000; padding: 0.75rem; border-radius: 6px; overflow-x: auto; color: #4ade80; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Next.js 16 <span class="badge">WASM Sandbox</span></h1>
+    <p>Running App Router React Server Components & API routes 100% inside your browser.</p>
+    <button id="fetch-btn">Fetch /api/hello</button>
+    <pre id="api-output">// Click above to call virtual API route</pre>
+  </div>
+  <script>
+    document.getElementById('fetch-btn').onclick = async () => {
+      const res = await fetch('/api/hello');
+      const data = await res.json();
+      document.getElementById('api-output').textContent = JSON.stringify(data, null, 2);
+    };
+  </script>
+</body>
+</html>\`);
+});
+
+server.listen(PORT, () => {
+  console.log(\`✓ Next.js server ready on virtual port \${PORT}\`);
+  console.log(\`✓ Service Worker preview route: /__preview/\${PORT}/\`);
+  console.log(\`✓ Try testing /api/hello via the live preview!\`);
+});
+`,
 };
 
 function appendTerminal(text: string, isError = false) {

@@ -23,6 +23,16 @@ export class Sandbox {
   }
 
   public static async create(options: SandboxOptions = {}): Promise<Sandbox> {
+    const memoryQuota = options.maxMemoryMb || 512;
+    if (memoryQuota > 1024) {
+      console.warn(`[Sandbox] Requested memory quota ${memoryQuota}MB exceeds maximum supported 1024MB. Clamping to 1024MB.`);
+      options.maxMemoryMb = 1024;
+    }
+
+    if (options.nextjsOptions && memoryQuota < 1024) {
+      console.warn(`[Sandbox] Next.js project detected with ${memoryQuota}MB quota. For Next.js builds and dev mode, maxMemoryMb: 1024 is recommended to avoid OOM.`);
+    }
+
     let worker: Worker;
 
     if (options.workerUrl && typeof Worker !== 'undefined') {

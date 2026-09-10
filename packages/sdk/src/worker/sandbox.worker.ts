@@ -12,6 +12,24 @@ import initWasm, {
 // @ts-ignore
 import wasmUrl from 'buddhilive-sandbox-core/buddhilive_sandbox_core_bg.wasm?url';
 
+import eventsShim, { EventEmitter } from './shims/events.js';
+import bufferShim, { Buffer } from './shims/buffer.js';
+import stringDecoderShim from './shims/string-decoder.js';
+import assertShim from './shims/assert.js';
+import utilShim from './shims/util.js';
+import osShim from './shims/os.js';
+import cryptoShim from './shims/crypto.js';
+import streamShim from './shims/stream.js';
+import zlibShim from './shims/zlib.js';
+import netShim from './shims/net.js';
+import tlsShim from './shims/tls.js';
+import childProcessShim from './shims/child-process.js';
+import workerThreadsShim from './shims/worker-threads.js';
+import httpShim, { activeHttpServers } from './shims/http.js';
+import fsWatcherShim, { notifyFsChange } from './shims/fs-watcher.js';
+import addonInterceptorShim, { interceptRequire } from './shims/addon-interceptor.js';
+import hmrBridgeShim, { globalHmrServer } from './shims/hmr-bridge.js';
+
 // Worker state
 let initialized = false;
 let wasmReady = false;
@@ -179,6 +197,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             vfs_write_file(path, u8);
           } catch (_) {}
         }
+        notifyFsChange(path, 'change');
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -223,6 +242,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             vfs_mkdir(path, !!recursive);
           } catch (_) {}
         }
+        notifyFsChange(path, 'change');
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -270,6 +290,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             vfs_rm(path, !!msg.recursive);
           } catch (_) {}
         }
+        notifyFsChange(path, 'rename');
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -290,7 +311,40 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             vfs_symlink(target, path);
           } catch (_) {}
         }
+        notifyFsChange(path, 'change');
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
+        break;
+      }
+
+      case 'http:request': {
+        const server = activeHttpServers.get(msg.port);
+        if (server) {
+          server.dispatchRequest({
+            method: msg.method,
+            path: msg.path,
+            headers: msg.headers,
+            body: msg.body,
+            replyPort: msg.replyPort,
+          });
+        } else if (msg.replyPort) {
+          msg.replyPort.postMessage({
+            type: 'end',
+            status: 503,
+            statusText: 'Service Unavailable',
+            headers: { 'Content-Type': 'text/plain' },
+            body: new TextEncoder().encode('Virtual HTTP server not listening').buffer,
+          });
+        }
+        break;
+      }
+
+      case 'ws:connect': {
+        globalHmrServer.handleConnection(msg.channelPort);
+        break;
+      }
+
+      case 'fs:external_change': {
+        notifyFsChange(msg.path, msg.changeType);
         break;
       }
 
@@ -369,7 +423,22 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                 exit: (code = 0) => {
                   throw { __isExit: true, code };
                 },
-                env: { NODE_ENV: 'development', PATH: '/node_modules/.bin' },
+                env: {
+                  NODE_ENV: 'development',
+                  PATH: '/node_modules/.bin',
+                  NEXT_TELEMETRY_DISABLED: '1',
+                  ...(msg.env || {}),
+                },
+                nextTick: (cb: Function, ...args: any[]) => setTimeout(() => cb(...args), 0),
+                hrtime: (time?: [number, number]) => {
+                  const now = performance.now();
+                  const seconds = Math.floor(now / 1000);
+                  const nanos = Math.floor((now % 1000) * 1e6);
+                  if (time) {
+                    return [seconds - time[0], nanos - time[1]];
+                  }
+                  return [seconds, nanos];
+                },
               };
 
               // Virtual fs built-in module
@@ -387,6 +456,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                   if (wasmReady) {
                     try { vfs_write_file(filePath, encoded); } catch (_) {}
                   }
+                  notifyFsChange(filePath, 'change');
                 },
                 readFileSync: (filePath: string, options?: any) => {
                   const { node } = resolveNode(filePath);
@@ -397,7 +467,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                   if (encoding === 'utf8' || encoding === 'utf-8') {
                     return new TextDecoder().decode(node.data);
                   }
-                  return node.data;
+                  return Buffer.from(node.data);
                 },
                 readdirSync: (dirPath: string) => {
                   const { node } = resolveNode(dirPath);
@@ -448,6 +518,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                   if (wasmReady) {
                     try { vfs_mkdir(dirPath, !!(options?.recursive)); } catch (_) {}
                   }
+                  notifyFsChange(dirPath, 'change');
                 },
                 unlinkSync: (filePath: string) => {
                   const { parent, name } = resolveNode(filePath);
@@ -456,10 +527,14 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                     if (wasmReady) {
                       try { vfs_rm(filePath, false); } catch (_) {}
                     }
+                    notifyFsChange(filePath, 'rename');
                   } else {
                     throw new Error(`ENOENT: no such file or directory, unlink '${filePath}'`);
                   }
                 },
+                watch: fsWatcherShim.watch,
+                watchFile: fsWatcherShim.watchFile,
+                unwatchFile: fsWatcherShim.unwatchFile,
                 promises: {
                   writeFile: async (p: string, d: string | Uint8Array, opt?: any) => virtualFs.writeFileSync(p, d, opt),
                   readFile: async (p: string, opt?: any) => virtualFs.readFileSync(p, opt),
@@ -510,39 +585,119 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                 },
               };
 
-              // Virtual http built-in module
-              const virtualHttp = {
-                createServer: (handler: (req: any, res: any) => void) => ({
-                  listen: (port: number, callback?: () => void) => {
-                    self.postMessage({ type: 'port:listen', port } as WorkerOutboundMessage);
-                    if (callback) setTimeout(callback, 0);
-                  },
-                  close: (callback?: () => void) => {
-                    self.postMessage({ type: 'port:close', port: 3000 } as WorkerOutboundMessage);
-                    if (callback) setTimeout(callback, 0);
-                  },
-                }),
-              };
+              // Module cache
+              const moduleCache = new Map<string, any>();
 
               // Virtual require
               const virtualRequire = (mod: string) => {
-                if (mod === 'fs' || mod === 'node:fs') return virtualFs;
-                if (mod === 'path' || mod === 'node:path') return virtualPath;
-                if (mod === 'http' || mod === 'node:http') return virtualHttp;
+                // Check native addon interceptor first
+                const intercepted = interceptRequire(mod);
+                if (intercepted !== null) return intercepted;
+
+                const cleanMod = mod.startsWith('node:') ? mod.slice(5) : mod;
+                if (cleanMod === 'fs') return virtualFs;
+                if (cleanMod === 'path') return virtualPath;
+                if (cleanMod === 'http' || cleanMod === 'https') return httpShim;
+                if (cleanMod === 'events') return eventsShim;
+                if (cleanMod === 'buffer') return bufferShim;
+                if (cleanMod === 'string_decoder') return stringDecoderShim;
+                if (cleanMod === 'stream') return streamShim;
+                if (cleanMod === 'stream/web') return { ReadableStream, WritableStream, TransformStream };
+                if (cleanMod === 'stream/promises') return streamShim.promises;
+                if (cleanMod === 'crypto') return cryptoShim;
+                if (cleanMod === 'zlib') return zlibShim;
+                if (cleanMod === 'os') return osShim;
+                if (cleanMod === 'net') return netShim;
+                if (cleanMod === 'tls') return tlsShim;
+                if (cleanMod === 'assert') return assertShim;
+                if (cleanMod === 'util') return utilShim;
+                if (cleanMod === 'child_process') return childProcessShim;
+                if (cleanMod === 'worker_threads') return workerThreadsShim;
+                if (cleanMod === 'url') return { URL, URLSearchParams, parse: (u: string) => new URL(u, 'http://localhost') };
+                if (cleanMod === 'querystring') return {
+                  parse: (str: string) => {
+                    const params: Record<string, string> = {};
+                    new URLSearchParams(str).forEach((v, k) => { params[k] = v; });
+                    return params;
+                  },
+                  stringify: (obj: any) => new URLSearchParams(obj).toString(),
+                };
+
+                // Check cache
+                if (moduleCache.has(mod)) {
+                  return moduleCache.get(mod);
+                }
 
                 // Check if mod is local or in node_modules
-                let targetFile = mod;
-                if (!mod.startsWith('.') && !mod.startsWith('/')) {
-                  targetFile = `/node_modules/${mod}/index.js`;
+                const candidates: string[] = [];
+                if (mod.startsWith('.') || mod.startsWith('/')) {
+                  candidates.push(mod);
+                  candidates.push(`${mod}.js`);
+                  candidates.push(`${mod}.json`);
+                  candidates.push(`${mod}/index.js`);
+                } else {
+                  candidates.push(`/node_modules/${mod}/index.js`);
+                  candidates.push(`/node_modules/${mod}.js`);
+                  candidates.push(`/node_modules/${mod}/package.json`);
                 }
-                const res = resolveNode(targetFile);
-                if (!res.node || !res.node.data) {
+
+                let targetFile: string | null = null;
+                let fileData: Uint8Array | null = null;
+
+                for (const candidate of candidates) {
+                  try {
+                    const res = resolveNode(candidate);
+                    if (res.node && res.node.data) {
+                      targetFile = candidate;
+                      fileData = res.node.data;
+                      break;
+                    }
+                  } catch (_) {}
+                }
+
+                if (!targetFile || !fileData) {
                   throw new Error(`Cannot find module '${mod}'`);
                 }
-                const fn = new Function('require', 'module', 'exports', 'process', 'console', new TextDecoder().decode(res.node.data));
+
+                // If package.json, find entrypoint
+                if (targetFile.endsWith('package.json')) {
+                  try {
+                    const pkgJson = JSON.parse(new TextDecoder().decode(fileData));
+                    const mainEntry = pkgJson.main || pkgJson.module || 'index.js';
+                    const resolvedMain = virtualPath.join(virtualPath.dirname(targetFile), mainEntry);
+                    return virtualRequire(resolvedMain);
+                  } catch (e) {
+                    throw new Error(`Failed to parse package.json for module '${mod}'`);
+                  }
+                }
+
+                // If JSON file
+                if (targetFile.endsWith('.json')) {
+                  const parsed = JSON.parse(new TextDecoder().decode(fileData));
+                  moduleCache.set(mod, parsed);
+                  return parsed;
+                }
+
+                const fn = new Function(
+                  'require',
+                  'module',
+                  'exports',
+                  'process',
+                  'console',
+                  'Buffer',
+                  new TextDecoder().decode(fileData)
+                );
                 const modObj = { exports: {} as any };
-                fn(virtualRequire, modObj, modObj.exports, virtualProcess, virtualConsole);
-                return modObj.exports;
+                moduleCache.set(mod, modObj.exports);
+
+                try {
+                  fn(virtualRequire, modObj, modObj.exports, virtualProcess, virtualConsole, Buffer);
+                  moduleCache.set(mod, modObj.exports);
+                  return modObj.exports;
+                } catch (err: any) {
+                  moduleCache.delete(mod);
+                  throw err;
+                }
               };
 
               // Execute script
@@ -550,11 +705,12 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                 'console',
                 'process',
                 'require',
+                'Buffer',
                 scriptCode
               );
 
               try {
-                runner(virtualConsole, virtualProcess, virtualRequire);
+                runner(virtualConsole, virtualProcess, virtualRequire, Buffer);
                 closeRingBuffer(sabStdout);
                 closeRingBuffer(sabStderr);
                 self.postMessage({ type: 'process:exit', pid, code: 0 } as WorkerOutboundMessage);

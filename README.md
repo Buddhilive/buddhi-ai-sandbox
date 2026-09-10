@@ -16,6 +16,7 @@ BuddhiLive Sandbox allows modern web applications to instantiate an isolated, fu
 - 📁 **POSIX In-Memory VirtualFS**: Full filesystem emulation (`readFile`, `writeFile`, `mkdir`, `readdir`, `stat`, `symlink`) with optional browser persistence (OPFS / IndexedDB).
 - 🔄 **Real-Time Streaming I/O**: Lock-free single-producer single-consumer (SPSC) ring buffers built on `SharedArrayBuffer` and `Atomics`.
 - 🌐 **In-Browser Web Application Previews**: Captures internal HTTP listeners (`http.createServer().listen(3000)`) via a Service Worker and renders live previews at `/__preview/:port/` inside `<iframe>` tags.
+- ⚡ **Full Next.js 16 Support**: Run real Next.js 16 App Router & Pages Router applications client-side in both development mode (`next dev` with HMR) and production mode (`next start`) with transparent `@next/swc` interception via WASM.
 - 📦 **Direct Client-Side NPM Installer**: Fetches manifests and tarballs from `registry.npmjs.org` over browser HTTPS and extracts packages directly into `/node_modules`.
 - 🛠️ **On-Demand Dynamic Native Toolchain**: Lazily loads Python and Clang WASM compilers only when native compilation (`binding.gyp` / `node-gyp`) is detected, keeping baseline SDK bundle under **100 KB**.
 
@@ -388,10 +389,20 @@ When running scripts via `node`, the sandbox provides standard Node.js global va
   - `process.exit(code)`
 
 #### Built-in Modules (`require` / `node:`)
-- **`fs` / `node:fs`**: Synchronous and asynchronous (`promises`) filesystem methods (`writeFileSync`, `readFileSync`, `readdirSync`, `statSync`, `existsSync`, `mkdirSync`, `unlinkSync`, and `fs.promises.*`).
+- **`fs` / `node:fs`**: Synchronous and asynchronous (`promises`) filesystem methods (`writeFileSync`, `readFileSync`, `readdirSync`, `statSync`, `existsSync`, `mkdirSync`, `unlinkSync`, and `fs.promises.*`), including `fs.watch` and `fs.watchFile` with real-time change notifications.
 - **`path` / `node:path`**: `join`, `resolve`, `basename`, `dirname`, `extname`.
-- **`http` / `node:http`**: `http.createServer((req, res) => { ... }).listen(port, callback)`.
-- **Module Resolution**: CommonJS `require(...)` supports relative workspace files (`require('./utils')`) and installed packages (`require('lodash')` from `/node_modules`).
+- **`http` / `https`**: Advanced virtual HTTP server supporting `IncomingMessage`, `ServerResponse`, headers, chunked streaming (for React Server Components `text/x-component`), and request dispatching.
+- **`events` / `node:events`**: Full `EventEmitter` implementation (`on`, `once`, `emit`, `removeListener`, `listenerCount`).
+- **`buffer` / `node:buffer`**: `Buffer` polyfill mapping to `Uint8Array` with `utf8`, `hex`, and `base64` codecs.
+- **`string_decoder`**: Progressive multi-byte UTF-8 string decoding.
+- **`stream` / `node:stream`**: `Readable`, `Writable`, `Transform`, `PassThrough`, `pipeline`, and web stream bridges (`fromWeb`, `toWeb`).
+- **`crypto` / `node:crypto`**: Fast hashing (`createHash('sha256')`, `createHmac`), `randomBytes`, `randomUUID`, and `timingSafeEqual`.
+- **`zlib` / `node:zlib`**: `gzipSync`, `gunzipSync`, `deflateSync`, `inflateSync`, and stream compressors.
+- **`os` / `node:os`**: `platform()`, `arch()`, `cpus()`, `homedir()`, `tmpdir()`, and memory metrics.
+- **`net` & `tls`**: Virtual TCP sockets, connection loopbacks, and TLS stubs.
+- **`assert` & `util`**: `assert`, `promisify`, `format`, `inspect`, `types`.
+- **`child_process` & `worker_threads`**: Browser-safe stubs for optional tooling.
+- **Module Resolution & Native Addons**: CommonJS `require(...)` supports relative workspace files, packages from `/node_modules`, and transparent synchronous interception of `@next/swc` (via `esbuild-wasm`) and `better-sqlite3` (via `wa-sqlite`).
 
 ---
 

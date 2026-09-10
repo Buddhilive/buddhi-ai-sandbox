@@ -5,6 +5,7 @@ import {
   createRingBufferWriter,
   DEFAULT_RING_BUFFER_SIZE,
 } from '../../src/worker-bridge.js';
+import { OOMError, SandboxError } from '../../src/types.js';
 
 describe('SharedArrayBuffer Ring Buffer I/O Bridge', () => {
   it('creates an initialized SharedArrayBuffer with correct header layout', () => {
@@ -61,4 +62,11 @@ describe('SharedArrayBuffer Ring Buffer I/O Bridge', () => {
 
     expect(fullOutput).toBe('Part 1: Part 2: Finished.');
   });
+
+  it('instantiates OOMError with correct error code', () => {
+    const oom = new OOMError('WebAssembly memory limit exceeded');
+    expect(oom).toBeInstanceOf(SandboxError);
+    expect(oom.code).toBe('ERR_OUT_OF_MEMORY');
+  });
 });
+

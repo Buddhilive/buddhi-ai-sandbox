@@ -35,28 +35,85 @@ export async function bridgeRequest(
       : null;
 
     return new Promise<Response>((resolve) => {
+      let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+      let responseResolved = false;
+      let initialStatus = 200;
+      let initialStatusText = 'OK';
+      const initialHeaders = new Headers({
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      });
+
       const timeout = setTimeout(() => {
-        resolve(
-          new Response(
-            `<html><body><h2>504 Gateway Timeout</h2><p>Port ${portNumber} timed out responding.</p></body></html>`,
-            { status: 504, headers: { 'Content-Type': 'text/html' } }
-          )
-        );
-      }, 10000);
+        if (!responseResolved) {
+          responseResolved = true;
+          resolve(
+            new Response(
+              `<html><body><h2>504 Gateway Timeout</h2><p>Port ${portNumber} timed out responding.</p></body></html>`,
+              { status: 504, headers: { 'Content-Type': 'text/html' } }
+            )
+          );
+        }
+      }, 15000);
 
       channel.port1.onmessage = (event) => {
         clearTimeout(timeout);
-        const { status, statusText, headers, body } = event.data;
-        const res = new Response(body, {
-          status: status || 200,
-          statusText: statusText || 'OK',
-          headers: {
-            ...headers,
-            'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Embedder-Policy': 'require-corp',
-          },
-        });
-        resolve(res);
+        const data = event.data;
+
+        if (data.type === 'headers') {
+          initialStatus = data.status || 200;
+          initialStatusText = data.statusText || 'OK';
+          if (data.headers) {
+            for (const [k, v] of Object.entries(data.headers)) {
+              initialHeaders.set(k, String(v));
+            }
+          }
+          return;
+        }
+
+        if (data.type === 'chunk') {
+          if (!responseResolved) {
+            responseResolved = true;
+            const stream = new ReadableStream<Uint8Array>({
+              start(c) {
+                streamController = c;
+                c.enqueue(new Uint8Array(data.data));
+              },
+            });
+            resolve(
+              new Response(stream, {
+                status: initialStatus,
+                statusText: initialStatusText,
+                headers: initialHeaders,
+              })
+            );
+          } else if (streamController) {
+            streamController.enqueue(new Uint8Array(data.data));
+          }
+          return;
+        }
+
+        if (data.type === 'end' || !data.type) {
+          if (streamController) {
+            if (data.body && data.body.byteLength > 0) {
+              streamController.enqueue(new Uint8Array(data.body));
+            }
+            streamController.close();
+          } else if (!responseResolved) {
+            responseResolved = true;
+            if (data.headers) {
+              for (const [k, v] of Object.entries(data.headers)) {
+                initialHeaders.set(k, String(v));
+              }
+            }
+            const res = new Response(data.body || null, {
+              status: data.status || initialStatus,
+              statusText: data.statusText || initialStatusText,
+              headers: initialHeaders,
+            });
+            resolve(res);
+          }
+        }
       };
 
       portEntry.messagePort!.postMessage(

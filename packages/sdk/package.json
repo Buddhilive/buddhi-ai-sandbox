@@ -1,6 +1,6 @@
 {
   "name": "@buddhilive/sandbox",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Client-side Node.js sandbox running entirely in WebAssembly & Web Workers",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

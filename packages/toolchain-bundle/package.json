@@ -1,6 +1,6 @@
 {
   "name": "@buddhilive/sandbox-toolchain",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "description": "On-demand native compilation toolchain (Python + Clang WASM) for client-side Node.js sandbox",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

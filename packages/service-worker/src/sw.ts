@@ -1,8 +1,25 @@
 /// <reference lib="webworker" />
 import { bridgeRequest } from './request-bridge.js';
 import { setupReconnectionHandshake } from './reconnect.js';
+import { globalPortRegistry } from './port-registry.js';
 
 declare const self: ServiceWorkerGlobalScope;
+
+self.addEventListener('message', (event) => {
+  const data = event.data;
+  if (!data || typeof data !== 'object') return;
+  const { type, port } = data;
+
+  if (type === 'port:register' && typeof port === 'number') {
+    const messagePort = event.ports && event.ports[0];
+    globalPortRegistry.register(port, messagePort);
+    if (event.source && 'postMessage' in event.source) {
+      (event.source as any).postMessage({ type: 'port:registered', port });
+    }
+  } else if (type === 'port:unregister' && typeof port === 'number') {
+    globalPortRegistry.unregister(port);
+  }
+});
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());

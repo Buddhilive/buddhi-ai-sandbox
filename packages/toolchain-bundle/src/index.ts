@@ -48,6 +48,9 @@ export class ToolchainBundle {
   }
 }
 
+import { NextRuntime } from './next-runtime.js';
+import { NextDevServer, NextDevServerOptions } from './next-dev-server.js';
+
 export {
   NodeGypRunner,
   PythonRuntime,
@@ -56,6 +59,9 @@ export {
   SqliteRuntime,
   SqliteDatabase,
   ImageProcessor,
+  NextRuntime,
+  NextDevServer,
+  type NextDevServerOptions,
 };
 
 

@@ -9,6 +9,12 @@ export default defineConfig({
       include: ['src/**/*'],
     }),
   ],
+  worker: {
+    format: 'es',
+    rollupOptions: {
+      external: [],
+    },
+  },
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
@@ -17,7 +23,7 @@ export default defineConfig({
       formats: ['es', 'cjs'],
     },
     rollupOptions: {
-      external: ['fflate'],
+      external: ['fflate', 'esbuild-wasm', 'wa-sqlite', '@buddhilive/sandbox-toolchain'],
       output: {
         globals: {
           fflate: 'fflate',

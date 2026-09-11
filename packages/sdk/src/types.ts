@@ -113,7 +113,7 @@ export type WorkerOutboundMessage =
       stdinSab: SharedArrayBuffer;
     }
   | { type: 'process:exit'; pid: number; code: number }
-  | { type: 'port:listen'; port: number; messagePort?: MessagePort }
+  | { type: 'port:listen'; port: number; messagePort?: MessagePort; bridgePort?: MessagePort }
   | { type: 'port:close'; port: number }
   | { type: 'toolchain:needed'; pkg: string }
   | { type: 'toolchain:progress'; loaded: number; total: number; tool: string }

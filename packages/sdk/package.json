@@ -23,10 +23,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@buddhilive/sandbox-toolchain": "workspace:*",
     "fflate": "^0.8.2"
   },
   "devDependencies": {
-    "@buddhilive/sandbox-toolchain": "workspace:*",
     "@playwright/test": "^1.44.0",
     "buddhilive-sandbox-core": "workspace:*",
     "typescript": "^5.4.5",

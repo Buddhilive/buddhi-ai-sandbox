@@ -25,7 +25,7 @@ import netShim from './shims/net.js';
 import tlsShim from './shims/tls.js';
 import childProcessShim from './shims/child-process.js';
 import workerThreadsShim from './shims/worker-threads.js';
-import httpShim, { activeHttpServers } from './shims/http.js';
+import httpShim, { activeHttpServers, onServerLifecycle, Server } from './shims/http.js';
 import fsWatcherShim, { notifyFsChange } from './shims/fs-watcher.js';
 import addonInterceptorShim, { interceptRequire } from './shims/addon-interceptor.js';
 import hmrBridgeShim, { globalHmrServer } from './shims/hmr-bridge.js';
@@ -168,8 +168,38 @@ function closeRingBuffer(sab: SharedArrayBuffer) {
 }
 
 // Active processes
-const processes = new Map<number, { killed: boolean; timeoutId?: any }>();
+interface ProcessHandleState {
+  pid: number;
+  killed: boolean;
+  timeoutId?: any;
+  sabStdout?: SharedArrayBuffer;
+  sabStderr?: SharedArrayBuffer;
+  sabStdin?: SharedArrayBuffer;
+  activeServers: Set<Server>;
+  isAlive: boolean;
+  isWaitingForServers: boolean;
+  unsubLifecycle?: () => void;
+}
+const processes = new Map<number, ProcessHandleState>();
 let nextPid = 1000;
+
+function exitProcess(pid: number, code: number) {
+  const proc = processes.get(pid);
+  if (!proc || !proc.isAlive) return;
+  proc.isAlive = false;
+  if (proc.unsubLifecycle) {
+    proc.unsubLifecycle();
+    proc.unsubLifecycle = undefined;
+  }
+  for (const s of proc.activeServers) {
+    try { s.close(); } catch (_) {}
+  }
+  proc.activeServers.clear();
+  if (proc.sabStdout) closeRingBuffer(proc.sabStdout);
+  if (proc.sabStderr) closeRingBuffer(proc.sabStderr);
+  self.postMessage({ type: 'process:exit', pid, code } as WorkerOutboundMessage);
+  processes.delete(pid);
+}
 
 self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
   const msg = event.data;
@@ -414,7 +444,27 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
           int32[3] = 65536; // capacity
         }
 
-        const proc = { killed: false };
+        const proc: ProcessHandleState = {
+          pid,
+          killed: false,
+          sabStdout,
+          sabStderr,
+          sabStdin,
+          activeServers: new Set<Server>(),
+          isAlive: true,
+          isWaitingForServers: false,
+        };
+        proc.unsubLifecycle = onServerLifecycle((event, server) => {
+          if (!proc.isAlive) return;
+          if (event === 'listen') {
+            proc.activeServers.add(server);
+          } else if (event === 'close') {
+            proc.activeServers.delete(server);
+            if (proc.isWaitingForServers && proc.activeServers.size === 0) {
+              exitProcess(pid, 0);
+            }
+          }
+        });
         processes.set(pid, proc);
 
         self.postMessage({
@@ -430,9 +480,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         setTimeout(async () => {
           try {
             if (proc.killed) {
-              closeRingBuffer(sabStdout);
-              closeRingBuffer(sabStderr);
-              self.postMessage({ type: 'process:exit', pid, code: 130 } as WorkerOutboundMessage);
+              exitProcess(pid, 130);
               return;
             }
 
@@ -441,9 +489,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
               const { node } = resolveNode(scriptPath);
               if (!node || !node.data) {
                 writeToRingBuffer(sabStderr, `Error: Cannot find module '${scriptPath}'\n`);
-                closeRingBuffer(sabStdout);
-                closeRingBuffer(sabStderr);
-                self.postMessage({ type: 'process:exit', pid, code: 1 } as WorkerOutboundMessage);
+                exitProcess(pid, 1);
                 return;
               }
 
@@ -803,29 +849,107 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
               try {
                 runner(virtualConsole, virtualProcess, virtualRequire, Buffer);
-                closeRingBuffer(sabStdout);
-                closeRingBuffer(sabStderr);
-                self.postMessage({ type: 'process:exit', pid, code: 0 } as WorkerOutboundMessage);
+                if (proc.activeServers.size > 0) {
+                  // Keep server process alive until all servers close or process is killed
+                  proc.isWaitingForServers = true;
+                } else {
+                  exitProcess(pid, 0);
+                }
               } catch (e: any) {
                 if (e && e.__isExit) {
-                  closeRingBuffer(sabStdout);
-                  closeRingBuffer(sabStderr);
-                  self.postMessage({ type: 'process:exit', pid, code: e.code } as WorkerOutboundMessage);
+                  exitProcess(pid, e.code);
                 } else {
                   writeToRingBuffer(sabStderr, (e?.stack || e?.message || String(e)) + '\n');
-                  closeRingBuffer(sabStdout);
-                  closeRingBuffer(sabStderr);
-                  self.postMessage({ type: 'process:exit', pid, code: 1 } as WorkerOutboundMessage);
+                  exitProcess(pid, 1);
                 }
+              }
+            } else if (command === 'next' || (command === 'npm' && args[0] === 'run' && args[1] === 'dev') || (command === 'npx' && args[0] === 'next')) {
+              try {
+                // Intercept Next.js dev server
+                const { NextRuntime, NextDevServer } = await import('@buddhilive/sandbox-toolchain');
+
+                // 1. Install prebundled shims in VFS if missing
+                NextRuntime.installNextShims({
+                  writeFile: (filePath: string, data: string | Uint8Array) => {
+                    const encoded = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+                    const { parent, name } = resolveNode(filePath);
+                    if (parent && parent.children && name) {
+                      parent.children.set(name, {
+                        isDir: false,
+                        data: encoded,
+                        mtime: Date.now(),
+                        mode: 0o644,
+                      });
+                      if (wasmReady) {
+                        try { vfs_write_file(filePath, encoded); } catch (_) {}
+                      }
+                      emitFsChangeEvent(filePath, 'create');
+                    }
+                  },
+                  mkdir: (dirPath: string, recursive = true) => {
+                    const parts = normalizePath(dirPath);
+                    let curr = rootNode;
+                    let acc = '';
+                    for (const part of parts) {
+                      acc += '/' + part;
+                      if (!curr.children!.has(part)) {
+                        curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+                        emitFsChangeEvent(acc, 'create');
+                      }
+                      curr = curr.children!.get(part)!;
+                    }
+                  },
+                  exists: (filePath: string) => {
+                    try {
+                      const { node } = resolveNode(filePath);
+                      return !!node;
+                    } catch (_) {
+                      return false;
+                    }
+                  },
+                }, '/workspace');
+
+                // 2. Launch NextDevServer
+                const devServer = new NextDevServer({
+                  vfs: {
+                    readFile: (filePath: string) => {
+                      try {
+                        const { node } = resolveNode(filePath);
+                        return node?.data || null;
+                      } catch (_) {
+                        return null;
+                      }
+                    },
+                    exists: (filePath: string) => {
+                      try {
+                        const { node } = resolveNode(filePath);
+                        return !!node;
+                      } catch (_) {
+                        return false;
+                      }
+                    },
+                  },
+                  httpModule: httpShim,
+                  rootDir: '/workspace',
+                  port: 3000,
+                  onLog: (msg: string) => writeToRingBuffer(sabStdout, msg),
+                });
+
+                const server = await devServer.start();
+                proc.activeServers.add(server);
+                proc.isWaitingForServers = true;
+              } catch (err: any) {
+                writeToRingBuffer(sabStderr, `Failed to launch Next.js dev server: ${err?.message || String(err)}\n`);
+                exitProcess(pid, 1);
               }
             } else {
               writeToRingBuffer(sabStdout, `Command '${command}' executed\n`);
-              closeRingBuffer(sabStdout);
-              closeRingBuffer(sabStderr);
-              self.postMessage({ type: 'process:exit', pid, code: 0 } as WorkerOutboundMessage);
+              exitProcess(pid, 0);
             }
           } finally {
-            processes.delete(pid);
+            if (proc.isAlive && !proc.isWaitingForServers) {
+              exitProcess(pid, 0);
+            }
           }
         }, 10);
         break;
@@ -836,6 +960,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         const proc = processes.get(pid);
         if (proc) {
           proc.killed = true;
+          exitProcess(pid, 130);
         }
         break;
       }

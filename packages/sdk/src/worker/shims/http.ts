@@ -169,6 +169,14 @@ export class ServerResponse extends Writable {
   }
 }
 
+export type ServerLifecycleListener = (event: 'listen' | 'close', server: Server, port: number) => void;
+const serverLifecycleListeners = new Set<ServerLifecycleListener>();
+
+export function onServerLifecycle(listener: ServerLifecycleListener): () => void {
+  serverLifecycleListeners.add(listener);
+  return () => serverLifecycleListeners.delete(listener);
+}
+
 export class Server extends EventEmitter {
   public listening = false;
   private _port: number = 3000;
@@ -192,9 +200,36 @@ export class Server extends EventEmitter {
 
     activeHttpServers.set(port, this);
 
+    // Create MessageChannel for request bridge
+    let bridgePort: MessagePort | undefined;
+    if (typeof MessageChannel !== 'undefined') {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = (event) => {
+        const msg = event.data;
+        if (msg && msg.type === 'http:request') {
+          this.dispatchRequest({
+            method: msg.method || 'GET',
+            path: msg.path || '/',
+            headers: msg.headers || {},
+            body: msg.body || null,
+            replyPort: msg.replyPort,
+          });
+        }
+      };
+      bridgePort = channel.port2;
+    }
+
     // Notify worker main thread that port is open
     if (typeof self !== 'undefined' && self.postMessage) {
-      self.postMessage({ type: 'port:listen', port });
+      if (bridgePort) {
+        self.postMessage({ type: 'port:listen', port, bridgePort }, [bridgePort]);
+      } else {
+        self.postMessage({ type: 'port:listen', port });
+      }
+    }
+
+    for (const listener of serverLifecycleListeners) {
+      try { listener('listen', this, port); } catch (_) {}
     }
 
     if (cb) setTimeout(cb, 0);
@@ -208,6 +243,10 @@ export class Server extends EventEmitter {
 
     if (typeof self !== 'undefined' && self.postMessage) {
       self.postMessage({ type: 'port:close', port: this._port });
+    }
+
+    for (const listener of serverLifecycleListeners) {
+      try { listener('close', this, this._port); } catch (_) {}
     }
 
     if (callback) setTimeout(callback, 0);

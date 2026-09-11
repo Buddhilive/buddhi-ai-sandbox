@@ -33,9 +33,13 @@ export class EsbuildCompiler {
   async load(): Promise<void> {
     if (this.isLoaded) return;
     try {
-      // Dynamic import of esbuild-wasm
-      // @ts-ignore
-      const esbuild = await import('esbuild-wasm');
+      let esbuild = typeof (globalThis as any).esbuild !== 'undefined' ? (globalThis as any).esbuild : null;
+      if (!esbuild && typeof Function !== 'undefined') {
+        try {
+          const importFn = new Function('m', 'return import(m).catch(() => null)');
+          esbuild = await importFn('esbuild-wasm');
+        } catch (_) {}
+      }
       this.esbuildInstance = esbuild;
       this.isLoaded = true;
     } catch (e) {

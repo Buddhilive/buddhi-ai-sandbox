@@ -1,6 +1,6 @@
 {
   "name": "buddhilive-sandbox-core",
-  "version": "0.1.0-beta.3",
+  "version": "0.1.0-beta.4",
   "private": true,
   "type": "module",
   "description": "Core WebAssembly runtime and VirtualFS for in-browser Node.js sandbox",

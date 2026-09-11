@@ -2,6 +2,8 @@ import {
   WorkerInboundMessage,
   WorkerOutboundMessage,
   SandboxError,
+  FileChangeEvent,
+  FileChangeListener,
 } from './types.js';
 
 const FLAG_EMPTY = 0;
@@ -134,6 +136,7 @@ export class WorkerBridge {
   private worker: Worker;
   private pendingRequests = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void }>();
   private messageListeners = new Set<(msg: WorkerOutboundMessage) => void>();
+  private fsChangeListeners = new Set<FileChangeListener>();
 
   constructor(worker: Worker) {
     this.worker = worker;
@@ -147,6 +150,20 @@ export class WorkerBridge {
             pending.reject(new SandboxError(msg.error));
           } else {
             pending.resolve(msg.result);
+          }
+        }
+      }
+
+      if (msg.type === 'fs:change') {
+        const changeEvent: FileChangeEvent = {
+          path: msg.path,
+          type: msg.changeType,
+        };
+        for (const listener of this.fsChangeListeners) {
+          try {
+            listener(changeEvent);
+          } catch (err) {
+            console.error('[WorkerBridge] Error in fs change listener:', err);
           }
         }
       }
@@ -177,9 +194,19 @@ export class WorkerBridge {
     return () => this.messageListeners.delete(listener);
   }
 
+  public onFsChange(listener: FileChangeListener): () => void {
+    this.fsChangeListeners.add(listener);
+    return () => this.fsChangeListeners.delete(listener);
+  }
+
+  public offFsChange(listener: FileChangeListener): void {
+    this.fsChangeListeners.delete(listener);
+  }
+
   public terminate() {
     this.worker.terminate();
     this.pendingRequests.clear();
     this.messageListeners.clear();
+    this.fsChangeListeners.clear();
   }
 }

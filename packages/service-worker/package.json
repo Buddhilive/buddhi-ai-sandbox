@@ -1,6 +1,6 @@
 {
   "name": "@buddhilive/sandbox-sw",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "Service Worker HTTP preview bridge for client-side Node.js sandbox",
   "main": "./dist/sw.js",
   "module": "./dist/sw.js",

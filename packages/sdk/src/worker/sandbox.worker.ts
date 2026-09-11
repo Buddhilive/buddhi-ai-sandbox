@@ -56,6 +56,43 @@ function normalizePath(p: string): string[] {
   return p.split('/').filter(x => x.length > 0 && x !== '.');
 }
 
+function canonicalPosixPath(p: string): string {
+  const parts = p.split('/').filter(x => x.length > 0 && x !== '.');
+  const stack: string[] = [];
+  for (const part of parts) {
+    if (part === '..') {
+      stack.pop();
+    } else {
+      stack.push(part);
+    }
+  }
+  return '/' + stack.join('/');
+}
+
+function collectDescendantPaths(basePath: string, node: VfsNode): string[] {
+  const paths: string[] = [];
+  if (node.children) {
+    for (const [childName, childNode] of node.children.entries()) {
+      const childPath = basePath === '/' ? `/${childName}` : `${basePath}/${childName}`;
+      if (childNode.isDir) {
+        paths.push(...collectDescendantPaths(childPath, childNode));
+      }
+      paths.push(childPath);
+    }
+  }
+  return paths;
+}
+
+function emitFsChangeEvent(rawPath: string, type: 'create' | 'update' | 'delete') {
+  const normPath = canonicalPosixPath(rawPath);
+  self.postMessage({
+    type: 'fs:change',
+    path: normPath,
+    changeType: type,
+  } as WorkerOutboundMessage);
+  notifyFsChange(normPath, type === 'delete' ? 'rename' : 'change');
+}
+
 function resolveNode(path: string, hops = 0): { node: VfsNode; parent?: VfsNode; name?: string } {
   if (hops > 40) throw new Error('ELOOP: too many symbolic links');
   const parts = normalizePath(path);
@@ -182,10 +219,11 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       case 'fs:write': {
         const { id, path, data } = msg;
         const u8 = new Uint8Array(data);
-        const { parent, name } = resolveNode(path);
+        const { parent, name, node: existingNode } = resolveNode(path);
         if (!parent || !name) {
           throw new Error(`ENOENT: cannot write to path ${path}`);
         }
+        const changeType: 'create' | 'update' = existingNode && !existingNode.isDir ? 'update' : 'create';
         parent.children!.set(name, {
           isDir: false,
           data: u8,
@@ -197,7 +235,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             vfs_write_file(path, u8);
           } catch (_) {}
         }
-        notifyFsChange(path, 'change');
+        emitFsChangeEvent(path, changeType);
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -221,9 +259,12 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         if (recursive) {
           const parts = normalizePath(path);
           let curr = rootNode;
+          let acc = '';
           for (const part of parts) {
+            acc += '/' + part;
             if (!curr.children!.has(part)) {
               curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+              emitFsChangeEvent(acc, 'create');
             }
             curr = curr.children!.get(part)!;
           }
@@ -236,13 +277,13 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             throw new Error(`EEXIST: file or directory already exists, '${path}'`);
           }
           parent.children!.set(name, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+          emitFsChangeEvent(path, 'create');
         }
         if (wasmReady) {
           try {
             vfs_mkdir(path, !!recursive);
           } catch (_) {}
         }
-        notifyFsChange(path, 'change');
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -281,23 +322,30 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
       case 'fs:rm': {
         const { id, path } = msg;
-        const { parent, name } = resolveNode(path);
+        const { parent, name, node } = resolveNode(path);
         if (parent && name && parent.children!.has(name)) {
+          if (node && node.isDir && msg.recursive) {
+            const descendants = collectDescendantPaths(path, node);
+            for (const desc of descendants) {
+              emitFsChangeEvent(desc, 'delete');
+            }
+          }
           parent.children!.delete(name);
+          emitFsChangeEvent(path, 'delete');
         }
         if (wasmReady) {
           try {
             vfs_rm(path, !!msg.recursive);
           } catch (_) {}
         }
-        notifyFsChange(path, 'rename');
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
 
       case 'fs:symlink': {
         const { id, target, path } = msg;
-        const { parent, name } = resolveNode(path);
+        const { parent, name, node: existingNode } = resolveNode(path);
+        const changeType: 'create' | 'update' = existingNode ? 'update' : 'create';
         if (parent && name) {
           parent.children!.set(name, {
             isDir: false,
@@ -305,13 +353,13 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
             mtime: Date.now(),
             mode: 0o777,
           });
+          emitFsChangeEvent(path, changeType);
         }
         if (wasmReady) {
           try {
             vfs_symlink(target, path);
           } catch (_) {}
         }
-        notifyFsChange(path, 'change');
         self.postMessage({ type: 'fs:response', id, result: null } as WorkerOutboundMessage);
         break;
       }
@@ -445,8 +493,9 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
               const virtualFs = {
                 writeFileSync: (filePath: string, data: string | Uint8Array, options?: any) => {
                   const encoded = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-                  const { parent, name } = resolveNode(filePath);
+                  const { parent, name, node: existingNode } = resolveNode(filePath);
                   if (!parent || !name) throw new Error(`ENOENT: no such file or directory, open '${filePath}'`);
+                  const changeType: 'create' | 'update' = existingNode && !existingNode.isDir ? 'update' : 'create';
                   parent.children!.set(name, {
                     isDir: false,
                     data: encoded,
@@ -456,7 +505,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                   if (wasmReady) {
                     try { vfs_write_file(filePath, encoded); } catch (_) {}
                   }
-                  notifyFsChange(filePath, 'change');
+                  emitFsChangeEvent(filePath, changeType);
                 },
                 readFileSync: (filePath: string, options?: any) => {
                   const { node } = resolveNode(filePath);
@@ -503,9 +552,12 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                   if (recursive) {
                     const parts = normalizePath(dirPath);
                     let curr = rootNode;
+                    let acc = '';
                     for (const part of parts) {
+                      acc += '/' + part;
                       if (!curr.children!.has(part)) {
                         curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+                        emitFsChangeEvent(acc, 'create');
                       }
                       curr = curr.children!.get(part)!;
                     }
@@ -514,11 +566,11 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                     if (!parent || !name) throw new Error(`ENOENT: no such file or directory, mkdir '${dirPath}'`);
                     if (parent.children!.has(name)) throw new Error(`EEXIST: file already exists, mkdir '${dirPath}'`);
                     parent.children!.set(name, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
+                    emitFsChangeEvent(dirPath, 'create');
                   }
                   if (wasmReady) {
                     try { vfs_mkdir(dirPath, !!(options?.recursive)); } catch (_) {}
                   }
-                  notifyFsChange(dirPath, 'change');
                 },
                 unlinkSync: (filePath: string) => {
                   const { parent, name } = resolveNode(filePath);
@@ -527,9 +579,47 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                     if (wasmReady) {
                       try { vfs_rm(filePath, false); } catch (_) {}
                     }
-                    notifyFsChange(filePath, 'rename');
+                    emitFsChangeEvent(filePath, 'delete');
                   } else {
                     throw new Error(`ENOENT: no such file or directory, unlink '${filePath}'`);
+                  }
+                },
+                rmdirSync: (dirPath: string, options?: any) => {
+                  const recursive = !!(options?.recursive);
+                  const { parent, name, node } = resolveNode(dirPath);
+                  if (parent && name && parent.children!.has(name)) {
+                    if (node && node.isDir && recursive) {
+                      const descendants = collectDescendantPaths(dirPath, node);
+                      for (const desc of descendants) {
+                        emitFsChangeEvent(desc, 'delete');
+                      }
+                    }
+                    parent.children!.delete(name);
+                    if (wasmReady) {
+                      try { vfs_rm(dirPath, recursive); } catch (_) {}
+                    }
+                    emitFsChangeEvent(dirPath, 'delete');
+                  } else {
+                    throw new Error(`ENOENT: no such file or directory, rmdir '${dirPath}'`);
+                  }
+                },
+                rmSync: (targetPath: string, options?: any) => {
+                  const recursive = !!(options?.recursive);
+                  const { parent, name, node } = resolveNode(targetPath);
+                  if (parent && name && parent.children!.has(name)) {
+                    if (node && node.isDir && recursive) {
+                      const descendants = collectDescendantPaths(targetPath, node);
+                      for (const desc of descendants) {
+                        emitFsChangeEvent(desc, 'delete');
+                      }
+                    }
+                    parent.children!.delete(name);
+                    if (wasmReady) {
+                      try { vfs_rm(targetPath, recursive); } catch (_) {}
+                    }
+                    emitFsChangeEvent(targetPath, 'delete');
+                  } else if (!options?.force) {
+                    throw new Error(`ENOENT: no such file or directory, rm '${targetPath}'`);
                   }
                 },
                 watch: fsWatcherShim.watch,
@@ -542,6 +632,8 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                   stat: async (p: string) => virtualFs.statSync(p),
                   mkdir: async (p: string, opt?: any) => virtualFs.mkdirSync(p, opt),
                   unlink: async (p: string) => virtualFs.unlinkSync(p),
+                  rmdir: async (p: string, opt?: any) => virtualFs.rmdirSync(p, opt),
+                  rm: async (p: string, opt?: any) => virtualFs.rmSync(p, opt),
                 },
               };
 

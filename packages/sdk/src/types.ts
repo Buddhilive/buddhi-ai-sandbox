@@ -91,6 +91,15 @@ export type WorkerInboundMessage =
   | { type: 'ws:connect'; port: number; url: string; clientId: string; channelPort: MessagePort }
   | { type: 'fs:external_change'; path: string; changeType: 'change' | 'rename' };
 
+export type FileChangeType = 'create' | 'update' | 'delete';
+
+export interface FileChangeEvent {
+  path: string;
+  type: FileChangeType;
+}
+
+export type FileChangeListener = (event: FileChangeEvent) => void;
+
 export type WorkerOutboundMessage =
   | { type: 'ready' }
   | { type: 'error'; message: string; code?: string }
@@ -109,5 +118,6 @@ export type WorkerOutboundMessage =
   | { type: 'toolchain:needed'; pkg: string }
   | { type: 'toolchain:progress'; loaded: number; total: number; tool: string }
   | { type: 'npm:progress'; loaded: number; total: number; package: string }
-  | { type: 'oom'; message: string };
+  | { type: 'oom'; message: string }
+  | { type: 'fs:change'; path: string; changeType: FileChangeType };
 

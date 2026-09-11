@@ -9,5 +9,8 @@ export type {
   ProcessExecResult,
   FileStat,
   ListenEvent,
+  FileChangeType,
+  FileChangeEvent,
+  FileChangeListener,
 } from './types.js';
 export type { PersistenceAdapter } from './fs-namespace.js';

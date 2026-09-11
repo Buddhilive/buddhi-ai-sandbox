@@ -1,5 +1,5 @@
 import { WorkerBridge } from './worker-bridge.js';
-import { FileStat } from './types.js';
+import { FileStat, FileChangeEvent, FileChangeListener } from './types.js';
 
 export interface PersistenceAdapter {
   save(path: string, data: Uint8Array): Promise<void>;
@@ -89,5 +89,17 @@ export class FsNamespace {
       target,
       path,
     });
+  }
+
+  on(event: 'change', listener: FileChangeListener): () => void {
+    if (event !== 'change') {
+      throw new Error(`Unsupported fs event: ${event}`);
+    }
+    return this.bridge.onFsChange(listener);
+  }
+
+  off(event: 'change', listener: FileChangeListener): void {
+    if (event !== 'change') return;
+    this.bridge.offFsChange(listener);
   }
 }

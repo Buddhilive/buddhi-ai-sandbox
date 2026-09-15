@@ -1,4 +1,5 @@
 pub mod error;
+pub mod pdf;
 pub mod ports;
 pub mod process;
 pub mod vfs;
@@ -37,6 +38,27 @@ pub fn sandbox_init() -> bool {
 #[wasm_bindgen]
 pub fn sandbox_core_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[wasm_bindgen]
+pub fn pdf_extract_bytes(
+    data: &[u8],
+    config_js: JsValue,
+    on_progress: Option<js_sys::Function>,
+) -> Result<JsValue, JsValue> {
+    let config: crate::pdf::ExtractionConfig = if config_js.is_undefined() || config_js.is_null() {
+        crate::pdf::ExtractionConfig::default()
+    } else {
+        serde_wasm_bindgen::from_value(config_js)
+            .map_err(|e| JsValue::from_str(&format!("Invalid extraction config: {}", e)))?
+    };
+
+    let reporter = crate::pdf::ProgressReporter::new(on_progress.as_ref());
+    let doc = crate::pdf::PdfEngine::extract(data, &config, &reporter)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    serde_wasm_bindgen::to_value(&doc)
+        .map_err(|e| JsValue::from_str(&format!("Failed to serialize result: {}", e)))
 }
 
 #[wasm_bindgen]

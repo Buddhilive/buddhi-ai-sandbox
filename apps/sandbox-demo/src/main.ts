@@ -393,4 +393,154 @@ clearBtn.addEventListener('click', () => {
   terminalEl.textContent = '';
 });
 
+// --- PDF Research Engine Demo Integration ---
+const viewSandboxBtn = document.getElementById('view-sandbox-btn') as HTMLButtonElement;
+const viewPdfBtn = document.getElementById('view-pdf-btn') as HTMLButtonElement;
+const sandboxMain = document.getElementById('sandbox-main') as HTMLElement;
+const pdfMain = document.getElementById('pdf-main') as HTMLElement;
+const examplePickerWrapper = document.getElementById('example-picker-wrapper') as HTMLElement;
+
+const pdfDropzone = document.getElementById('pdf-dropzone') as HTMLElement;
+const pdfFileInput = document.getElementById('pdf-file-input') as HTMLInputElement;
+const pdfSampleBtn = document.getElementById('pdf-sample-btn') as HTMLButtonElement;
+const pdfProgressCard = document.getElementById('pdf-progress-card') as HTMLElement;
+const pdfStageBadge = document.getElementById('pdf-stage-badge') as HTMLElement;
+const pdfProgressBar = document.getElementById('pdf-progress-bar') as HTMLElement;
+const pdfProgressMsg = document.getElementById('pdf-progress-msg') as HTMLElement;
+const pdfProgressPct = document.getElementById('pdf-progress-pct') as HTMLElement;
+const pdfMetaCard = document.getElementById('pdf-meta-card') as HTMLElement;
+const pdfMetaTitle = document.getElementById('pdf-meta-title') as HTMLElement;
+const pdfMetaPages = document.getElementById('pdf-meta-pages') as HTMLElement;
+const pdfMetaTime = document.getElementById('pdf-meta-time') as HTMLElement;
+const pdfMarkdownOutput = document.getElementById('pdf-markdown-output') as HTMLTextAreaElement;
+const pdfAstOutput = document.getElementById('pdf-ast-output') as HTMLElement;
+const copyMarkdownBtn = document.getElementById('copy-markdown-btn') as HTMLButtonElement;
+const copyJsonBtn = document.getElementById('copy-json-btn') as HTMLButtonElement;
+
+if (viewSandboxBtn && viewPdfBtn) {
+  viewSandboxBtn.addEventListener('click', () => {
+    sandboxMain.style.display = 'grid';
+    pdfMain.style.display = 'none';
+    examplePickerWrapper.style.display = 'flex';
+    viewSandboxBtn.style.color = '#f8fafc';
+    viewPdfBtn.style.color = 'var(--accent)';
+  });
+
+  viewPdfBtn.addEventListener('click', () => {
+    sandboxMain.style.display = 'none';
+    pdfMain.style.display = 'grid';
+    examplePickerWrapper.style.display = 'none';
+    viewPdfBtn.style.color = '#f8fafc';
+    viewSandboxBtn.style.color = '#94a3b8';
+  });
+}
+
+async function processPdfBuffer(buffer: Uint8Array, name: string) {
+  if (!sandbox) return;
+
+  pdfProgressCard.style.display = 'block';
+  pdfMetaCard.style.display = 'none';
+  pdfMarkdownOutput.value = 'Processing PDF extraction pipeline...';
+  pdfAstOutput.textContent = 'Processing...';
+
+  const startTime = performance.now();
+
+  try {
+    const result = await sandbox.pdfEngine.extract(buffer, {
+      cacheInVfs: true,
+      documentId: name.replace(/[^a-zA-Z0-9_-]/g, '_'),
+      onProgress: (p) => {
+        pdfStageBadge.textContent = p.stage;
+        pdfProgressBar.style.width = `${p.percent}%`;
+        pdfProgressPct.textContent = `${Math.round(p.percent)}%`;
+        pdfProgressMsg.textContent = p.message;
+      },
+    });
+
+    const elapsed = ((performance.now() - startTime) / 1000).toFixed(2);
+
+    pdfMetaCard.style.display = 'block';
+    pdfMetaTitle.innerHTML = `<strong>Title:</strong> ${result.metadata.title || name}`;
+    pdfMetaPages.innerHTML = `<strong>Pages:</strong> ${result.metadata.totalPages}`;
+    pdfMetaTime.innerHTML = `<strong>Duration:</strong> ${elapsed}s`;
+
+    pdfMarkdownOutput.value = result.markdown;
+    pdfAstOutput.textContent = JSON.stringify(
+      {
+        id: result.id,
+        metadata: result.metadata,
+        toc: result.toc,
+        pagesCount: result.pages.length,
+        pages: result.pages,
+      },
+      null,
+      2
+    );
+  } catch (err: any) {
+    pdfProgressMsg.textContent = `Error: ${err?.message || err}`;
+    pdfProgressBar.style.background = '#ef4444';
+    pdfMarkdownOutput.value = `Extraction failed:\n${err?.message || err}`;
+  }
+}
+
+if (pdfDropzone && pdfFileInput) {
+  pdfDropzone.addEventListener('click', () => pdfFileInput.click());
+
+  pdfDropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    pdfDropzone.style.borderColor = 'var(--accent)';
+    pdfDropzone.style.background = 'rgba(14, 165, 233, 0.15)';
+  });
+
+  pdfDropzone.addEventListener('dragleave', () => {
+    pdfDropzone.style.borderColor = 'var(--border)';
+    pdfDropzone.style.background = 'rgba(15, 23, 42, 0.6)';
+  });
+
+  pdfDropzone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    pdfDropzone.style.borderColor = 'var(--border)';
+    pdfDropzone.style.background = 'rgba(15, 23, 42, 0.6)';
+
+    const file = e.dataTransfer?.files[0];
+    if (file && file.name.endsWith('.pdf')) {
+      const buffer = new Uint8Array(await file.arrayBuffer());
+      await processPdfBuffer(buffer, file.name);
+    }
+  });
+
+  pdfFileInput.addEventListener('change', async () => {
+    const file = pdfFileInput.files?.[0];
+    if (file) {
+      const buffer = new Uint8Array(await file.arrayBuffer());
+      await processPdfBuffer(buffer, file.name);
+    }
+  });
+}
+
+if (pdfSampleBtn) {
+  pdfSampleBtn.addEventListener('click', async () => {
+    const sampleBytes = new TextEncoder().encode(
+      "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 75 >>\nstream\nBT /F1 14 Tf 72 720 Td (Attention Is All You Need) Tj 0 -24 Td (Abstract) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000214 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n340\n%%EOF\n"
+    );
+    await processPdfBuffer(sampleBytes, 'sample_research_paper.pdf');
+  });
+}
+
+if (copyMarkdownBtn && pdfMarkdownOutput) {
+  copyMarkdownBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(pdfMarkdownOutput.value);
+    copyMarkdownBtn.textContent = 'Copied!';
+    setTimeout(() => (copyMarkdownBtn.textContent = 'Copy'), 2000);
+  });
+}
+
+if (copyJsonBtn && pdfAstOutput) {
+  copyJsonBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(pdfAstOutput.textContent || '');
+    copyJsonBtn.textContent = 'Copied!';
+    setTimeout(() => (copyJsonBtn.textContent = 'Copy JSON'), 2000);
+  });
+}
+
 init();

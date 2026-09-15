@@ -14,6 +14,9 @@ pub enum SandboxError {
     ProcessNotFound(u32),
     OutOfMemory,
     ExecutionFailed(String),
+    InvalidPdf(String),
+    EncryptedPdf(String),
+    PdfExtractionError(String),
 }
 
 impl fmt::Display for SandboxError {
@@ -30,6 +33,9 @@ impl fmt::Display for SandboxError {
             SandboxError::ProcessNotFound(pid) => write!(f, "ESRCH: no such process, PID {}", pid),
             SandboxError::OutOfMemory => write!(f, "ENOMEM: out of memory"),
             SandboxError::ExecutionFailed(msg) => write!(f, "Execution error: {}", msg),
+            SandboxError::InvalidPdf(msg) => write!(f, "Invalid PDF: {}", msg),
+            SandboxError::EncryptedPdf(msg) => write!(f, "Encrypted PDF: {}", msg),
+            SandboxError::PdfExtractionError(msg) => write!(f, "PDF extraction failed: {}", msg),
         }
     }
 }

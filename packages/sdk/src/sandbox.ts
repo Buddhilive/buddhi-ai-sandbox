@@ -2,6 +2,7 @@ import { WorkerBridge } from './worker-bridge.js';
 import { FsNamespace } from './fs-namespace.js';
 import { ProcessNamespace } from './process-namespace.js';
 import { PortsNamespace } from './ports-namespace.js';
+import { PdfEngine } from './pdf-engine.js';
 import { SandboxOptions, SandboxError, WorkerOutboundMessage } from './types.js';
 import { scaffoldNextStackApp, type ScaffoldNextStackOptions } from './scaffold-next-stack.js';
 
@@ -12,6 +13,7 @@ export class Sandbox {
   public readonly fs: FsNamespace;
   public readonly process: ProcessNamespace;
   public readonly ports: PortsNamespace;
+  public readonly pdfEngine: PdfEngine;
 
   private bridge: WorkerBridge;
   private isDisposed = false;
@@ -21,6 +23,7 @@ export class Sandbox {
     this.fs = new FsNamespace(bridge);
     this.process = new ProcessNamespace(bridge);
     this.ports = new PortsNamespace(bridge);
+    this.pdfEngine = new PdfEngine(bridge, this.fs);
   }
 
   public static async create(options: SandboxOptions = {}): Promise<Sandbox> {

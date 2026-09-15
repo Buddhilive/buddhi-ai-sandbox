@@ -1,6 +1,7 @@
 import { WorkerInboundMessage, WorkerOutboundMessage } from '../types.js';
 import initWasm, {
   sandbox_init,
+  pdf_extract_bytes,
   vfs_write_file,
   vfs_read_file,
   vfs_mkdir,
@@ -201,6 +202,22 @@ function exitProcess(pid: number, code: number) {
   processes.delete(pid);
 }
 
+async function ensureWasm() {
+  if (wasmReady) return;
+  try {
+    const targetWasm = options?.wasmUrl || wasmUrl;
+    if (targetWasm) {
+      await initWasm(targetWasm);
+    } else {
+      await initWasm();
+    }
+    sandbox_init();
+    wasmReady = true;
+  } catch (e) {
+    console.warn('[Sandbox Worker] WebAssembly runtime fallback:', e);
+  }
+}
+
 self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
   const msg = event.data;
 
@@ -208,19 +225,7 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
     switch (msg.type) {
       case 'init': {
         options = msg.options || {};
-        try {
-          const targetWasm = options.wasmUrl || wasmUrl;
-          if (targetWasm) {
-            await initWasm(targetWasm);
-          } else {
-            await initWasm();
-          }
-          sandbox_init();
-          wasmReady = true;
-        } catch (e) {
-          console.warn('[Sandbox Worker] WebAssembly runtime fallback to in-memory VFS:', e);
-        }
-
+        await ensureWasm();
         initialized = true;
         // Default standard directories
         const ensureDir = (p: string) => {
@@ -433,6 +438,48 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
       case 'fs:external_change': {
         notifyFsChange(msg.path, msg.changeType);
+        break;
+      }
+
+      case 'pdf:extract': {
+        const { id, data, options: extractOpts } = msg;
+        try {
+          await ensureWasm();
+
+          const onProgressCallback = (progressObj: any) => {
+            self.postMessage({
+              type: 'pdf:progress',
+              id,
+              progress: progressObj,
+            } as WorkerOutboundMessage);
+          };
+
+          const result = pdf_extract_bytes(
+            data,
+            {
+              extract_tables: extractOpts?.extractTables ?? true,
+              extract_images: extractOpts?.extractImages ?? false,
+              document_id: extractOpts?.documentId || id,
+            },
+            onProgressCallback
+          );
+
+          self.postMessage({
+            type: 'pdf:result',
+            id,
+            result,
+          } as WorkerOutboundMessage);
+        } catch (err: any) {
+          self.postMessage({
+            type: 'pdf:error',
+            id,
+            error: err?.message || String(err),
+          } as WorkerOutboundMessage);
+        }
+        break;
+      }
+
+      case 'pdf:abort': {
         break;
       }
 

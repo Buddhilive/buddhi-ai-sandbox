@@ -93,7 +93,9 @@ export type WorkerInboundMessage =
       replyPort: MessagePort;
     }
   | { type: 'ws:connect'; port: number; url: string; clientId: string; channelPort: MessagePort }
-  | { type: 'fs:external_change'; path: string; changeType: 'change' | 'rename' };
+  | { type: 'fs:external_change'; path: string; changeType: 'change' | 'rename' }
+  | { type: 'pdf:extract'; id: string; data: Uint8Array; options?: ExtractionOptions }
+  | { type: 'pdf:abort'; id: string };
 
 export type FileChangeType = 'create' | 'update' | 'delete';
 
@@ -123,5 +125,98 @@ export type WorkerOutboundMessage =
   | { type: 'toolchain:progress'; loaded: number; total: number; tool: string }
   | { type: 'npm:progress'; loaded: number; total: number; package: string }
   | { type: 'oom'; message: string }
-  | { type: 'fs:change'; path: string; changeType: FileChangeType };
+  | { type: 'fs:change'; path: string; changeType: FileChangeType }
+  | { type: 'pdf:progress'; id: string; progress: ExtractionProgress }
+  | { type: 'pdf:result'; id: string; result: ExtractedDocument }
+  | { type: 'pdf:error'; id: string; error: string; code?: string };
+
+export class PdfExtractionError extends SandboxError {
+  constructor(message: string, code = 'ERR_PDF_EXTRACTION') {
+    super(message, code);
+    this.name = 'PdfExtractionError';
+  }
+}
+
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DocumentBlock {
+  id: string;
+  type: 'heading' | 'paragraph' | 'table' | 'figure' | 'list' | 'equation';
+  text: string;
+  level?: number;
+  pageNumber: number;
+  bbox?: BoundingBox;
+}
+
+export interface ExtractedTable {
+  id: string;
+  pageNumber: number;
+  headers: string[];
+  rows: string[][];
+  markdown: string;
+  bbox?: BoundingBox;
+}
+
+export interface PageData {
+  pageNumber: number;
+  width: number;
+  height: number;
+  blocks: DocumentBlock[];
+  tables: ExtractedTable[];
+}
+
+export interface DocumentMetadata {
+  title?: string;
+  authors?: string[];
+  totalPages: number;
+  creationDate?: string;
+  producer?: string;
+}
+
+export interface TableOfContentsItem {
+  title: string;
+  level: number;
+  pageNumber: number;
+  blockId?: string;
+}
+
+export interface ExtractedDocument {
+  id: string;
+  metadata: DocumentMetadata;
+  markdown: string;
+  pages: PageData[];
+  toc: TableOfContentsItem[];
+}
+
+export type ExtractionStage =
+  | 'initializing'
+  | 'loading'
+  | 'extracting_pages'
+  | 'detecting_tables'
+  | 'structuring'
+  | 'generating_markdown'
+  | 'completed'
+  | 'failed';
+
+export interface ExtractionProgress {
+  stage: ExtractionStage;
+  pageCurrent: number;
+  pageTotal: number;
+  percent: number;
+  message: string;
+}
+
+export interface ExtractionOptions {
+  extractTables?: boolean;
+  extractImages?: boolean;
+  cacheInVfs?: boolean;
+  documentId?: string;
+  onProgress?: (progress: ExtractionProgress) => void;
+  signal?: AbortSignal;
+}
 

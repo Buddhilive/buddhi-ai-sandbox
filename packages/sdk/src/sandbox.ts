@@ -4,7 +4,6 @@ import { ProcessNamespace } from './process-namespace.js';
 import { PortsNamespace } from './ports-namespace.js';
 import { PdfEngine } from './pdf-engine.js';
 import { SandboxOptions, SandboxError, WorkerOutboundMessage } from './types.js';
-import { scaffoldNextStackApp, type ScaffoldNextStackOptions } from './scaffold-next-stack.js';
 
 // @ts-ignore
 import InlineSandboxWorker from './worker/sandbox.worker.ts?worker&inline';
@@ -31,10 +30,6 @@ export class Sandbox {
     if (memoryQuota > 1024) {
       console.warn(`[Sandbox] Requested memory quota ${memoryQuota}MB exceeds maximum supported 1024MB. Clamping to 1024MB.`);
       options.maxMemoryMb = 1024;
-    }
-
-    if (options.nextjsOptions && memoryQuota < 1024) {
-      console.warn(`[Sandbox] Next.js project detected with ${memoryQuota}MB quota. For Next.js builds and dev mode, maxMemoryMb: 1024 is recommended to avoid OOM.`);
     }
 
     let worker: Worker;
@@ -72,10 +67,6 @@ export class Sandbox {
     await initPromise;
 
     return new Sandbox(bridge);
-  }
-
-  public async scaffoldNextStackApp(options?: ScaffoldNextStackOptions): Promise<void> {
-    return scaffoldNextStackApp(this, options);
   }
 
   public async dispose(): Promise<void> {

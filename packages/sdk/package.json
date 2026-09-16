@@ -23,7 +23,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@buddhilive/sandbox-toolchain": "workspace:*",
     "fflate": "^0.8.2"
   },
   "devDependencies": {

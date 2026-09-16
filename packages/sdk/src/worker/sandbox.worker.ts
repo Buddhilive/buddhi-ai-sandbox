@@ -247,16 +247,6 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         ensureDir('/node_modules');
         ensureDir('/tmp');
 
-        if (options?.stackPreset === 'next-stack') {
-          ensureDir('/workspace/db');
-          ensureDir('/workspace/store');
-          ensureDir('/workspace/app');
-          ensureDir('/workspace/app/api');
-          ensureDir('/workspace/components');
-          ensureDir('/workspace/components/ui');
-          ensureDir('/workspace/lib');
-        }
-
         self.postMessage({ type: 'ready' } as WorkerOutboundMessage);
         break;
       }
@@ -1033,85 +1023,6 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                   writeToRingBuffer(sabStderr, (e?.stack || e?.message || String(e)) + '\n');
                   exitProcess(pid, 1);
                 }
-              }
-            } else if (command === 'next' || (command === 'npm' && args[0] === 'run' && args[1] === 'dev') || (command === 'npx' && args[0] === 'next')) {
-              try {
-                // Intercept Next.js dev server
-                const { NextRuntime, NextDevServer } = await import('@buddhilive/sandbox-toolchain');
-
-                // 1. Install prebundled shims in VFS if missing
-                NextRuntime.installNextShims({
-                  writeFile: (filePath: string, data: string | Uint8Array) => {
-                    const encoded = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-                    const { parent, name } = resolveNode(filePath);
-                    if (parent && parent.children && name) {
-                      parent.children.set(name, {
-                        isDir: false,
-                        data: encoded,
-                        mtime: Date.now(),
-                        mode: 0o644,
-                      });
-                      if (wasmReady) {
-                        try { vfs_write_file(filePath, encoded); } catch (_) {}
-                      }
-                      emitFsChangeEvent(filePath, 'create');
-                    }
-                  },
-                  mkdir: (dirPath: string, recursive = true) => {
-                    const parts = normalizePath(dirPath);
-                    let curr = rootNode;
-                    let acc = '';
-                    for (const part of parts) {
-                      acc += '/' + part;
-                      if (!curr.children!.has(part)) {
-                        curr.children!.set(part, { isDir: true, children: new Map(), mtime: Date.now(), mode: 0o755 });
-                        emitFsChangeEvent(acc, 'create');
-                      }
-                      curr = curr.children!.get(part)!;
-                    }
-                  },
-                  exists: (filePath: string) => {
-                    try {
-                      const { node } = resolveNode(filePath);
-                      return !!node;
-                    } catch (_) {
-                      return false;
-                    }
-                  },
-                }, '/workspace');
-
-                // 2. Launch NextDevServer
-                const devServer = new NextDevServer({
-                  vfs: {
-                    readFile: (filePath: string) => {
-                      try {
-                        const { node } = resolveNode(filePath);
-                        return node?.data || null;
-                      } catch (_) {
-                        return null;
-                      }
-                    },
-                    exists: (filePath: string) => {
-                      try {
-                        const { node } = resolveNode(filePath);
-                        return !!node;
-                      } catch (_) {
-                        return false;
-                      }
-                    },
-                  },
-                  httpModule: httpShim,
-                  rootDir: '/workspace',
-                  port: 3000,
-                  onLog: (msg: string) => writeToRingBuffer(sabStdout, msg),
-                });
-
-                const server = await devServer.start();
-                proc.activeServers.add(server);
-                proc.isWaitingForServers = true;
-              } catch (err: any) {
-                writeToRingBuffer(sabStderr, `Failed to launch Next.js dev server: ${err?.message || String(err)}\n`);
-                exitProcess(pid, 1);
               }
             } else {
               writeToRingBuffer(sabStdout, `Command '${command}' executed\n`);

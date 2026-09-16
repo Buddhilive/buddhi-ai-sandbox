@@ -9,8 +9,7 @@
   },
   "dependencies": {
     "@buddhilive/sandbox": "workspace:*",
-    "@buddhilive/sandbox-sw": "workspace:*",
-    "@buddhilive/sandbox-toolchain": "workspace:*"
+    "@buddhilive/sandbox-sw": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.4.5",

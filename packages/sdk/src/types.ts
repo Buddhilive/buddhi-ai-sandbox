@@ -15,17 +15,7 @@ export interface SandboxOptions {
   workerUrl?: string;
   /** Optional URL or custom path to WebAssembly core binary */
   wasmUrl?: string;
-  /** Optional stack preset to pre-configure module aliases and environment */
-  stackPreset?: StackPreset;
-  /** Next.js specific configuration options */
-  nextjsOptions?: {
-    version?: string;
-    turbopack?: boolean;
-    telemetry?: boolean;
-  };
 }
-
-export type StackPreset = 'next-stack';
 
 export interface FileStat {
   isFile: boolean;

@@ -23,7 +23,7 @@ export default defineConfig({
       formats: ['es', 'cjs'],
     },
     rollupOptions: {
-      external: ['fflate', 'esbuild-wasm', 'wa-sqlite', '@buddhilive/sandbox-toolchain'],
+      external: ['fflate', 'esbuild-wasm', 'wa-sqlite'],
       output: {
         globals: {
           fflate: 'fflate',

@@ -9,6 +9,13 @@ import initWasm, {
   vfs_rm,
   vfs_stat,
   vfs_symlink,
+  rlm_session_create,
+  rlm_session_push_context,
+  rlm_session_init_query,
+  rlm_session_step,
+  rlm_session_feed_response,
+  rlm_session_cancel,
+  rlm_session_destroy,
 } from 'buddhilive-sandbox-core';
 // @ts-ignore
 import wasmUrl from 'buddhilive-sandbox-core/buddhilive_sandbox_core_bg.wasm?url';
@@ -35,6 +42,7 @@ import hmrBridgeShim, { globalHmrServer } from './shims/hmr-bridge.js';
 let initialized = false;
 let wasmReady = false;
 let options: any = {};
+const pendingLlmResponses = new Map<string, (resp: string) => void>();
 
 // In-worker in-memory virtual filesystem fallback and bindings
 interface VfsNode {
@@ -470,6 +478,146 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
       }
 
       case 'pdf:abort': {
+        break;
+      }
+
+      case 'rlm:init': {
+        const { id, sessionId, config } = msg;
+        try {
+          await ensureWasm();
+          rlm_session_create(sessionId, config || {});
+          self.postMessage({
+            type: 'rlm:response',
+            id,
+            result: {
+              answer: 'Session initialized',
+              iterations: 0,
+              terminated_by: 'init',
+              cost_estimate_tokens: 0,
+            },
+          } as WorkerOutboundMessage);
+        } catch (err: any) {
+          self.postMessage({
+            type: 'rlm:response',
+            id,
+            error: err?.message || String(err),
+          } as WorkerOutboundMessage);
+        }
+        break;
+      }
+
+      case 'rlm:push_context': {
+        const { id, sessionId, text } = msg;
+        try {
+          await ensureWasm();
+          const count = rlm_session_push_context(sessionId, text);
+          self.postMessage({
+            type: 'rlm:response',
+            id,
+            result: {
+              answer: `Pushed ${count} chunks`,
+              iterations: 0,
+              terminated_by: 'push_context',
+              cost_estimate_tokens: 0,
+            },
+          } as WorkerOutboundMessage);
+        } catch (err: any) {
+          self.postMessage({
+            type: 'rlm:response',
+            id,
+            error: err?.message || String(err),
+          } as WorkerOutboundMessage);
+        }
+        break;
+      }
+
+      case 'rlm:llm_response': {
+        const { turnId, response } = msg;
+        const resolver = pendingLlmResponses.get(turnId);
+        if (resolver) {
+          pendingLlmResponses.delete(turnId);
+          resolver(response);
+        }
+        break;
+      }
+
+      case 'rlm:run': {
+        const { id, sessionId, query } = msg;
+        try {
+          await ensureWasm();
+          rlm_session_init_query(sessionId, query);
+
+          // Execute step loop asynchronously
+          let currentStep: any = rlm_session_step(sessionId);
+
+          while (true) {
+            if (currentStep.status === 'needs_llm') {
+              self.postMessage({
+                type: 'rlm:progress',
+                sessionId,
+                iteration: currentStep.iteration,
+                phase: 'llm_query',
+              } as WorkerOutboundMessage);
+
+              self.postMessage({
+                type: 'rlm:llm_query',
+                sessionId,
+                turnId: currentStep.turn_id,
+                prompt: currentStep.prompt,
+              } as WorkerOutboundMessage);
+
+              const turnId = currentStep.turn_id;
+              const llmResponse = await new Promise<string>((resolve) => {
+                pendingLlmResponses.set(turnId, resolve);
+              });
+
+              currentStep = rlm_session_feed_response(sessionId, turnId, llmResponse);
+            } else if (currentStep.status === 'done') {
+              self.postMessage({
+                type: 'rlm:response',
+                id,
+                result: {
+                  answer: currentStep.answer,
+                  iterations: currentStep.iterations,
+                  terminated_by: currentStep.terminated_by,
+                  cost_estimate_tokens: currentStep.cost_estimate_tokens,
+                },
+              } as WorkerOutboundMessage);
+              break;
+            } else if (currentStep.status === 'error') {
+              self.postMessage({
+                type: 'rlm:response',
+                id,
+                error: currentStep.message || 'RLM execution error',
+              } as WorkerOutboundMessage);
+              break;
+            } else {
+              break;
+            }
+          }
+        } catch (err: any) {
+          self.postMessage({
+            type: 'rlm:response',
+            id,
+            error: err?.message || String(err),
+          } as WorkerOutboundMessage);
+        }
+        break;
+      }
+
+      case 'rlm:cancel': {
+        const { sessionId } = msg;
+        try {
+          rlm_session_cancel(sessionId);
+        } catch (_) {}
+        break;
+      }
+
+      case 'rlm:destroy': {
+        const { sessionId } = msg;
+        try {
+          rlm_session_destroy(sessionId);
+        } catch (_) {}
         break;
       }
 

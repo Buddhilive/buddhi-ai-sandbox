@@ -85,7 +85,13 @@ export type WorkerInboundMessage =
   | { type: 'ws:connect'; port: number; url: string; clientId: string; channelPort: MessagePort }
   | { type: 'fs:external_change'; path: string; changeType: 'change' | 'rename' }
   | { type: 'pdf:extract'; id: string; data: Uint8Array; options?: ExtractionOptions }
-  | { type: 'pdf:abort'; id: string };
+  | { type: 'pdf:abort'; id: string }
+  | { type: 'rlm:init'; id: string; sessionId: string; config?: RlmConfig }
+  | { type: 'rlm:push_context'; id: string; sessionId: string; text: string }
+  | { type: 'rlm:run'; id: string; sessionId: string; query: string }
+  | { type: 'rlm:llm_response'; sessionId: string; turnId: string; response: string }
+  | { type: 'rlm:cancel'; sessionId: string }
+  | { type: 'rlm:destroy'; sessionId: string };
 
 export type FileChangeType = 'create' | 'update' | 'delete';
 
@@ -118,7 +124,10 @@ export type WorkerOutboundMessage =
   | { type: 'fs:change'; path: string; changeType: FileChangeType }
   | { type: 'pdf:progress'; id: string; progress: ExtractionProgress }
   | { type: 'pdf:result'; id: string; result: ExtractedDocument }
-  | { type: 'pdf:error'; id: string; error: string; code?: string };
+  | { type: 'pdf:error'; id: string; error: string; code?: string }
+  | { type: 'rlm:response'; id: string; error?: string; result?: RlmResult }
+  | { type: 'rlm:llm_query'; sessionId: string; turnId: string; prompt: string }
+  | { type: 'rlm:progress'; sessionId: string; iteration: number; phase: string };
 
 export class PdfExtractionError extends SandboxError {
   constructor(message: string, code = 'ERR_PDF_EXTRACTION') {
@@ -209,4 +218,33 @@ export interface ExtractionOptions {
   onProgress?: (progress: ExtractionProgress) => void;
   signal?: AbortSignal;
 }
+
+export class RlmError extends SandboxError {
+  constructor(message: string, code = 'ERR_RLM') {
+    super(message, code);
+    this.name = 'RlmError';
+  }
+}
+
+export type ChunkStrategy =
+  | { type: 'fixed_char'; value: number }
+  | { type: 'paragraph' }
+  | { type: 'sentence' };
+
+export interface RlmConfig {
+  maxDepth?: number;
+  chunkSize?: number;
+  chunkStrategy?: ChunkStrategy;
+  contextType?: string;
+}
+
+export interface RlmResult {
+  answer: string;
+  iterations: number;
+  terminated_by: 'FINAL' | 'FINAL_VAR' | 'max_depth' | 'cancelled' | 'error' | 'init' | 'push_context' | string;
+  error?: string;
+  cost_estimate_tokens: number;
+}
+
+export type LlmQueryFn = (prompt: string) => Promise<string>;
 

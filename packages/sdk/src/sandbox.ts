@@ -3,7 +3,8 @@ import { FsNamespace } from './fs-namespace.js';
 import { ProcessNamespace } from './process-namespace.js';
 import { PortsNamespace } from './ports-namespace.js';
 import { PdfEngine } from './pdf-engine.js';
-import { SandboxOptions, SandboxError, WorkerOutboundMessage } from './types.js';
+import { RlmSession } from './rlm-session.js';
+import { SandboxOptions, SandboxError, WorkerOutboundMessage, RlmConfig } from './types.js';
 
 // @ts-ignore
 import InlineSandboxWorker from './worker/sandbox.worker.ts?worker&inline';
@@ -67,6 +68,10 @@ export class Sandbox {
     await initPromise;
 
     return new Sandbox(bridge);
+  }
+
+  public createRlmSession(config?: RlmConfig, sessionId?: string): RlmSession {
+    return new RlmSession(this.bridge, config, sessionId);
   }
 
   public async dispose(): Promise<void> {

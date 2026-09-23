@@ -1,10 +1,13 @@
 {
   "name": "buddhilive-sandbox-core",
-  "version": "0.1.0-beta.6",
+  "version": "0.1.0-beta.7",
   "private": true,
   "type": "module",
   "description": "Core WebAssembly runtime and VirtualFS for in-browser Node.js sandbox",
   "license": "MIT",
+  "scripts": {
+    "build": "wasm-pack build --target web --release"
+  },
   "main": "./pkg/buddhilive_sandbox_core.js",
   "module": "./pkg/buddhilive_sandbox_core.js",
   "types": "./pkg/buddhilive_sandbox_core.d.ts",

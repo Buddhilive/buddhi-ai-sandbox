@@ -2,6 +2,7 @@ pub mod error;
 pub mod pdf;
 pub mod ports;
 pub mod process;
+pub mod rlm;
 pub mod vfs;
 
 use std::sync::Mutex;
@@ -125,4 +126,60 @@ pub fn process_kill(pid: u32) -> Result<(), JsValue> {
     let mut lock = RUNTIME.lock().unwrap();
     let rt = lock.as_mut().ok_or_else(|| JsValue::from_str("Runtime not initialized"))?;
     rt.processes.kill(pid).map_err(|e| JsValue::from(e))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_create(session_id: &str, config_js: JsValue) -> Result<String, JsValue> {
+    let config: crate::rlm::RlmConfig = if config_js.is_undefined() || config_js.is_null() {
+        crate::rlm::RlmConfig::default()
+    } else {
+        serde_wasm_bindgen::from_value(config_js)
+            .map_err(|e| JsValue::from_str(&format!("Invalid RLM config: {}", e)))?
+    };
+
+    crate::rlm::create_session(session_id.to_string(), config);
+    Ok(session_id.to_string())
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_push_context(session_id: &str, text: &str) -> Result<usize, JsValue> {
+    crate::rlm::push_context(session_id, text)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_init_query(session_id: &str, query: &str) -> Result<(), JsValue> {
+    crate::rlm::run_session_init(session_id, query)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_step(session_id: &str) -> Result<JsValue, JsValue> {
+    let step_res = crate::rlm::session_step(session_id)
+        .map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&step_res)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_feed_response(
+    session_id: &str,
+    turn_id: &str,
+    response: &str,
+) -> Result<JsValue, JsValue> {
+    let step_res = crate::rlm::session_feed_response(session_id, turn_id, response)
+        .map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&step_res)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_cancel(session_id: &str) -> Result<bool, JsValue> {
+    crate::rlm::session_cancel(session_id)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_destroy(session_id: &str) -> bool {
+    crate::rlm::session_destroy(session_id)
 }

@@ -7,6 +7,9 @@ import {
 import { WorkerBridge } from './worker-bridge.js';
 import { FsNamespace } from './fs-namespace.js';
 
+// @ts-ignore
+import InlineSandboxWorker from './worker/sandbox.worker.ts?worker&inline';
+
 export class PdfEngine {
   private bridge?: WorkerBridge;
   private fs?: FsNamespace;
@@ -134,9 +137,15 @@ export class PdfEngine {
 
     // Standalone worker mode
     if (!this.standaloneWorker) {
-      const workerUrl = new URL('./worker/sandbox.worker.js', import.meta.url);
-      this.standaloneWorker = new Worker(workerUrl, { type: 'module' });
-      this.bridge = new WorkerBridge(this.standaloneWorker);
+      if (typeof InlineSandboxWorker === 'function') {
+        this.standaloneWorker = new InlineSandboxWorker();
+      } else {
+        throw new PdfExtractionError(
+          'Web Worker environment is required for standalone PDF extraction',
+          'ERR_NO_WORKER'
+        );
+      }
+      this.bridge = new WorkerBridge(this.standaloneWorker!);
     }
     return this.bridge!;
   }

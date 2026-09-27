@@ -212,38 +212,83 @@ impl RlmSession {
         self.total_response_chars += response.len();
         self.current_turn_id = None;
 
-        // Check for FINAL(...)
-        if let Some(final_arg) = extract_parenthesized_argument(response, "FINAL") {
-            let cleaned = strip_outer_quotes(final_arg.trim());
-            return RlmStepResult::Done {
-                answer: cleaned.to_string(),
-                iterations: self.iteration,
-                terminated_by: "FINAL".to_string(),
-                cost_estimate_tokens: self.estimate_tokens(),
-            };
-        }
-
-        // Check for FINAL_VAR(...)
-        if let Some(var_name) = extract_parenthesized_argument(response, "FINAL_VAR") {
-            let key = strip_outer_quotes(var_name.trim());
-            let answer = self
-                .variable_store
-                .get(key)
-                .unwrap_or("")
-                .to_string();
-            return RlmStepResult::Done {
-                answer,
-                iterations: self.iteration,
-                terminated_by: "FINAL_VAR".to_string(),
-                cost_estimate_tokens: self.estimate_tokens(),
-            };
-        }
-
-        // Parse variable assignments (e.g., buffer = "..." or custom_var = "...")
+        // 1. First, parse any variable assignments (e.g. buffer = "..." or buffer = """...""")
         if let Some((k, v)) = parse_variable_assignment(response) {
             self.variable_store.set(&k, &v);
-        } else {
-            // Default accumulation into buffer if no explicit assignment
+        }
+
+        // 2. Helper to resolve variable or outside text when argument is a variable name like "buffer"
+        let resolve_answer = |arg: &str, var_store: &VariableStore, raw_resp: &str| -> Option<String> {
+            let cleaned = strip_outer_quotes(arg.trim());
+            // If argument is NOT "buffer" and NOT a known variable, it's the direct answer text
+            if cleaned != "buffer" && cleaned != "FINAL_VAR(buffer)" && !var_store.has(cleaned) {
+                if !cleaned.is_empty() {
+                    return Some(cleaned.to_string());
+                }
+            }
+
+            // If it is "buffer" or a variable, resolve from variable_store
+            let var_key = if var_store.has(cleaned) {
+                cleaned
+            } else {
+                "buffer"
+            };
+
+            if let Some(val) = var_store.get(var_key) {
+                let val_trimmed = val.trim();
+                if !val_trimmed.is_empty() && val_trimmed != "buffer" {
+                    return Some(val_trimmed.to_string());
+                }
+            }
+
+            // If variable_store doesn't have it, extract text outside FINAL(...) / FINAL_VAR(...)
+            let outside = raw_resp
+                .replace(&format!("FINAL({})", arg), "")
+                .replace(&format!("FINAL_VAR({})", arg), "")
+                .replace("FINAL(buffer)", "")
+                .replace("FINAL_VAR(buffer)", "");
+
+            let mut candidate = outside.trim();
+            if let Some(eq_pos) = candidate.find('=') {
+                let left = candidate[..eq_pos].trim();
+                if left == "buffer" {
+                    candidate = candidate[eq_pos + 1..].trim();
+                }
+            }
+            let stripped = strip_outer_quotes(candidate).trim();
+            if stripped.len() > 10 && stripped != "buffer" {
+                return Some(stripped.to_string());
+            }
+
+            None
+        };
+
+        // 3. Check for FINAL(...)
+        if let Some(final_arg) = extract_parenthesized_argument(response, "FINAL") {
+            if let Some(answer) = resolve_answer(final_arg, &self.variable_store, response) {
+                return RlmStepResult::Done {
+                    answer,
+                    iterations: self.iteration,
+                    terminated_by: "FINAL".to_string(),
+                    cost_estimate_tokens: self.estimate_tokens(),
+                };
+            }
+        }
+
+        // 4. Check for FINAL_VAR(...)
+        if let Some(var_name) = extract_parenthesized_argument(response, "FINAL_VAR") {
+            if let Some(answer) = resolve_answer(var_name, &self.variable_store, response) {
+                return RlmStepResult::Done {
+                    answer,
+                    iterations: self.iteration,
+                    terminated_by: "FINAL_VAR".to_string(),
+                    cost_estimate_tokens: self.estimate_tokens(),
+                };
+            }
+        }
+
+        // 5. Default accumulation into buffer if no explicit assignment
+        if !self.variable_store.has("buffer") || self.variable_store.get("buffer").map_or(true, |b| b.trim().is_empty()) {
             let existing = self.variable_store.get("buffer").unwrap_or("");
             let new_buf = if existing.is_empty() {
                 response.trim().to_string()
@@ -253,13 +298,19 @@ impl RlmSession {
             self.variable_store.set("buffer", &new_buf);
         }
 
-        // If we reached max depth after this response, terminate
+        // 6. If we reached max depth after this response, terminate
         if self.iteration >= self.config.max_depth {
-            let answer = self
+            let mut answer = self
                 .variable_store
                 .get("buffer")
-                .unwrap_or("Maximum recursion depth reached without explicit FINAL() answer")
+                .unwrap_or("")
+                .trim()
                 .to_string();
+
+            if answer.is_empty() || answer == "buffer" {
+                answer = "Maximum recursion depth reached without explicit FINAL() answer.".to_string();
+            }
+
             return RlmStepResult::Done {
                 answer,
                 iterations: self.iteration,
@@ -324,12 +375,11 @@ impl RlmSession {
              Context Overview:\n{}{}\n\n\
              Task Query:\n{}\n\n\
              Instructions:\n\
-             1. Examine the stored chunks and intermediate variables.\n\
-             2. To record intermediate progress, write: buffer = \"<your findings>\"\n\
-             3. When you have the final answer, output ONLY:\n\
-                FINAL(<your complete final answer>)\n\
-                or\n\
-                FINAL_VAR(buffer)\n",
+             1. Examine the stored context chunks, search hints, and notes.\n\
+             2. To record intermediate progress or notes, write: buffer = \"<your findings>\"\n\
+             3. When you have the final answer, output your complete answer text inside FINAL(...):\n\
+                FINAL(<write your complete answer here>)\n\
+                Do NOT output just FINAL(buffer) without the actual answer content.\n",
             total_chunks,
             total_chars,
             self.iteration + 1,
@@ -368,27 +418,56 @@ pub fn extract_parenthesized_argument<'a>(text: &'a str, tag: &str) -> Option<&'
     None
 }
 
-/// Strips matching outer single or double quotes
+/// Strips matching outer single, double, or triple quotes
 pub fn strip_outer_quotes(s: &str) -> &str {
-    if (s.starts_with('"') && s.ends_with('"') && s.len() >= 2)
-        || (s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2)
+    let trimmed = s.trim();
+    if (trimmed.starts_with("\"\"\"") && trimmed.ends_with("\"\"\"") && trimmed.len() >= 6)
+        || (trimmed.starts_with("'''") && trimmed.ends_with("'''") && trimmed.len() >= 6)
     {
-        &s[1..s.len() - 1]
+        trimmed[3..trimmed.len() - 3].trim()
+    } else if (trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2)
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2)
+    {
+        trimmed[1..trimmed.len() - 1].trim()
     } else {
-        s
+        trimmed
     }
 }
 
-/// Parses simple assignment: `var_name = "value"` or `var_name = value`
+/// Parses simple or multiline assignment: `var_name = "value"` or `var_name = """value"""`
 fn parse_variable_assignment(text: &str) -> Option<(String, String)> {
     for line in text.lines() {
         let trimmed = line.trim();
         if let Some(eq_pos) = trimmed.find('=') {
             let left = trimmed[..eq_pos].trim();
-            // Variable name should be alphanumeric or underscore
             if !left.is_empty() && left.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                let right = trimmed[eq_pos + 1..].trim();
-                let cleaned_val = strip_outer_quotes(right);
+                let right_on_line = trimmed[eq_pos + 1..].trim();
+                // Check if right side starts with multiline triple quotes
+                if right_on_line.starts_with("\"\"\"") || right_on_line.starts_with("'''") {
+                    let delim = &right_on_line[..3];
+                    if let Some(pos) = text.find(&format!("{}=", left)) {
+                        let after_eq = &text[pos + left.len() + 1..];
+                        if let Some(start) = after_eq.find(delim) {
+                            let rest = &after_eq[start + 3..];
+                            if let Some(end) = rest.find(delim) {
+                                return Some((left.to_string(), rest[..end].trim().to_string()));
+                            }
+                        }
+                    }
+                } else if right_on_line.starts_with('"') || right_on_line.starts_with('\'') {
+                    let delim = &right_on_line[..1];
+                    if let Some(pos) = text.find(&format!("{}=", left)) {
+                        let after_eq = &text[pos + left.len() + 1..];
+                        if let Some(start) = after_eq.find(delim) {
+                            let rest = &after_eq[start + 1..];
+                            if let Some(end) = rest.find(delim) {
+                                return Some((left.to_string(), rest[..end].trim().to_string()));
+                            }
+                        }
+                    }
+                }
+
+                let cleaned_val = strip_outer_quotes(right_on_line);
                 return Some((left.to_string(), cleaned_val.to_string()));
             }
         }

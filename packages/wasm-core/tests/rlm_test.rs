@@ -280,3 +280,34 @@ fn test_bm25_search() {
     let non_matching = store.bm25_search("astronomy astrophysics telescope", 3);
     assert!(non_matching.is_empty());
 }
+
+#[test]
+fn test_rlm_session_final_buffer_resolution() {
+    let mut config = RlmConfig::default();
+    config.max_depth = 3;
+    let mut session = RlmSession::new("s_buffer_test".to_string(), config);
+    session.set_query("Summarize the paper");
+
+    let step1 = session.step();
+    let turn1 = match step1 {
+        RlmStepResult::NeedsLlm { turn_id, .. } => turn_id,
+        _ => panic!("Expected NeedsLlm"),
+    };
+
+    // Case 1: Model outputs buffer = "..." and FINAL(buffer) in turn 1
+    let step2 = session.feed_response(
+        &turn1,
+        "Here are my findings:\nbuffer = \"This paper introduces a fast transformer architecture.\"\nFINAL(buffer)",
+    );
+
+    match step2 {
+        RlmStepResult::Done { answer, terminated_by, iterations, .. } => {
+            assert_eq!(terminated_by, "FINAL");
+            assert_eq!(iterations, 1);
+            assert_eq!(answer, "This paper introduces a fast transformer architecture.");
+            assert_ne!(answer, "buffer");
+        }
+        _ => panic!("Expected Done with resolved buffer"),
+    }
+}
+

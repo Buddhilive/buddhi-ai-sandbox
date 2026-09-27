@@ -2,6 +2,7 @@ import {
   WorkerInboundMessage,
   WorkerOutboundMessage,
   SandboxError,
+  RlmError,
   FileChangeEvent,
   FileChangeListener,
 } from './types.js';
@@ -142,12 +143,16 @@ export class WorkerBridge {
     this.worker = worker;
     this.worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
       const msg = event.data;
-      if (msg.type === 'fs:response') {
+      if (msg.type === 'fs:response' || msg.type === 'rlm:response') {
         const pending = this.pendingRequests.get(msg.id);
         if (pending) {
           this.pendingRequests.delete(msg.id);
           if (msg.error) {
-            pending.reject(new SandboxError(msg.error));
+            pending.reject(
+              msg.type === 'rlm:response'
+                ? new RlmError(msg.error)
+                : new SandboxError(msg.error)
+            );
           } else {
             pending.resolve(msg.result);
           }

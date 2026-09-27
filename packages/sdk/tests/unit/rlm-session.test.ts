@@ -170,4 +170,46 @@ describe('RlmSession SDK Client', () => {
     // Cannot run on disposed session
     await expect(session.run('test', async () => '')).rejects.toThrow(RlmError);
   });
+
+  it('resolves bridge.request with real WorkerBridge when rlm:response is received', async () => {
+    let capturedWorkerListener: ((ev: MessageEvent) => void) | null = null;
+    const mockWorker = {
+      postMessage: vi.fn((msg: any) => {
+        if (msg.type === 'rlm:init') {
+          capturedWorkerListener?.({
+            data: {
+              type: 'rlm:response',
+              id: msg.id,
+              result: { answer: 'Session initialized', iterations: 0, terminated_by: 'init', cost_estimate_tokens: 0 },
+            },
+          } as MessageEvent);
+        } else if (msg.type === 'rlm:push_context') {
+          capturedWorkerListener?.({
+            data: {
+              type: 'rlm:response',
+              id: msg.id,
+              result: { answer: 'Pushed 5 chunks', iterations: 0, terminated_by: 'push_context', cost_estimate_tokens: 0 },
+            },
+          } as MessageEvent);
+        }
+      }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      terminate: vi.fn(),
+      set onmessage(fn: (ev: MessageEvent) => void) {
+        capturedWorkerListener = fn;
+      },
+      get onmessage() {
+        return capturedWorkerListener;
+      },
+    } as unknown as Worker;
+
+    const realBridge = new WorkerBridge(mockWorker);
+    const session = new RlmSession(realBridge, { maxDepth: 5 }, 'real_bridge_session');
+
+    // These both call bridge.request and must resolve cleanly
+    await expect(session.init()).resolves.toBeUndefined();
+    await expect(session.addContext('Sample text for context ingestion')).resolves.toBeUndefined();
+  });
 });
+

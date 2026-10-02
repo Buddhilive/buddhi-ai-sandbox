@@ -183,3 +183,29 @@ pub fn rlm_session_cancel(session_id: &str) -> Result<bool, JsValue> {
 pub fn rlm_session_destroy(session_id: &str) -> bool {
     crate::rlm::session_destroy(session_id)
 }
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn rlm_session_attach_opfs(
+    session_id: &str,
+    handle: web_sys::FileSystemSyncAccessHandle,
+) -> Result<usize, JsValue> {
+    crate::rlm::session_attach_opfs(session_id, handle)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_attach_text(session_id: &str, text: &str) -> Result<usize, JsValue> {
+    crate::rlm::session_attach_text(session_id, text)
+        .map_err(|e| JsValue::from_str(&e))
+}
+
+#[wasm_bindgen]
+pub fn rlm_session_read_range(
+    session_id: &str,
+    offset: f64,
+    length: f64,
+) -> Result<String, JsValue> {
+    crate::rlm::session_read_range(session_id, offset as u64, length as u64)
+        .map_err(|e| JsValue::from_str(&e))
+}

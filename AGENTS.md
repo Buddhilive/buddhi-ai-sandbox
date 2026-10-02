@@ -67,8 +67,10 @@
 2. **Main Thread Isolation**: All runtime execution, filesystem emulation, and compilation MUST execute inside dedicated Web Workers. The browser UI main thread must remain responsive at 60 FPS.
 3. **Cross-Origin Isolation**: `SharedArrayBuffer` requires Cross-Origin Isolation (`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`). Vite development and preview servers must preserve these headers.
 4. **Self-Contained Distribution**: `@buddhilive/sandbox` is distributed as a single, zero-config bundle containing inline worker code to ensure compatibility with consumer bundlers.
-5. **Evidence-Based Verification**: Always run verification commands through `terminal-runner` or terminal tools and report actual exit codes and stdout/stderr output.
-6. **Spec-Driven Development (SDD)**: Features follow the SDD lifecycle:
+6. **No LiteRT in Sandbox Rule (Non-Negotiable)**: `@buddhilive/sandbox` and its packages MUST NOT import, depend on, or bundle `@litert-lm/core` or model weights. All LLM inference must be injected via the `llmFn` callback from the host application.
+7. **Recursive Language Model (RLM) & OPFS**: Large documents (>1MB or out-of-core) are indexed and accessed via OPFS `createSyncAccessHandle()` inside the Web Worker. The exploration protocol (`PEEK`, `SEARCH`, `LINES`, `SET`, `GET`, `SUBQUERY`, `FINAL`, `FINAL_VAR`) runs in Rust WASM with bounded observations.
+8. **Evidence-Based Verification**: Always run verification commands through `terminal-runner` or terminal tools and report actual exit codes and stdout/stderr output.
+9. **Spec-Driven Development (SDD)**: Features follow the SDD lifecycle:
    1. `/specify` — create feature branch and refine `spec.md`
    2. `/plan` — synthesize technical architecture into `plan.md`
    3. `/tasks` — break down tasks by user story in `tasks.md`

@@ -88,6 +88,7 @@ export type WorkerInboundMessage =
   | { type: 'pdf:abort'; id: string }
   | { type: 'rlm:init'; id: string; sessionId: string; config?: RlmConfig }
   | { type: 'rlm:push_context'; id: string; sessionId: string; text: string }
+  | { type: 'rlm:attach_opfs'; id: string; sessionId: string; path: string }
   | { type: 'rlm:run'; id: string; sessionId: string; query: string }
   | { type: 'rlm:llm_response'; sessionId: string; turnId: string; response: string }
   | { type: 'rlm:cancel'; sessionId: string }
@@ -126,8 +127,27 @@ export type WorkerOutboundMessage =
   | { type: 'pdf:result'; id: string; result: ExtractedDocument }
   | { type: 'pdf:error'; id: string; error: string; code?: string }
   | { type: 'rlm:response'; id: string; error?: string; result?: RlmResult }
-  | { type: 'rlm:llm_query'; sessionId: string; turnId: string; prompt: string }
-  | { type: 'rlm:progress'; sessionId: string; iteration: number; phase: string };
+  | {
+      type: 'rlm:llm_query';
+      sessionId: string;
+      turnId: string;
+      prompt: string;
+      role?: LlmRole;
+      subId?: string;
+    }
+  | {
+      type: 'rlm:progress';
+      sessionId: string;
+      iteration: number;
+      phase:
+        | 'initializing'
+        | 'indexing'
+        | 'exploring'
+        | 'sub_query'
+        | 'synthesizing'
+        | 'llm_query'
+        | string;
+    };
 
 export class PdfExtractionError extends SandboxError {
   constructor(message: string, code = 'ERR_PDF_EXTRACTION') {
@@ -231,20 +251,46 @@ export type ChunkStrategy =
   | { type: 'paragraph' }
   | { type: 'sentence' };
 
+export type RlmMode = 'legacy' | 'explore' | 'auto';
+export type LlmRole = 'root' | 'sub';
+
 export interface RlmConfig {
   maxDepth?: number;
   chunkSize?: number;
   chunkStrategy?: ChunkStrategy;
   contextType?: string;
+  mode?: RlmMode;
+  maxTurns?: number;
+  maxSubQueries?: number;
+  maxObservationChars?: number;
+  directAnswerThresholdChars?: number;
 }
 
 export interface RlmResult {
   answer: string;
   iterations: number;
-  terminated_by: 'FINAL' | 'FINAL_VAR' | 'max_depth' | 'cancelled' | 'error' | 'init' | 'push_context' | string;
+  terminated_by:
+    | 'FINAL'
+    | 'FINAL_VAR'
+    | 'max_depth'
+    | 'cancelled'
+    | 'budget'
+    | 'error'
+    | 'init'
+    | 'push_context'
+    | string;
   error?: string;
   cost_estimate_tokens: number;
 }
 
-export type LlmQueryFn = (prompt: string) => Promise<string>;
+export interface LlmQueryContext {
+  role?: LlmRole;
+  subId?: string;
+  signal?: AbortSignal;
+}
+
+export type LlmQueryFn = (
+  prompt: string,
+  context?: LlmQueryContext
+) => Promise<string>;
 

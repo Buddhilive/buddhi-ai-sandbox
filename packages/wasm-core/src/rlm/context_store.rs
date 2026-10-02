@@ -132,7 +132,7 @@ impl ContextStore {
 }
 
 /// Matches pattern with optional simple wildcards (`*`, `.`)
-fn match_pattern(text: &str, pat: &str) -> Option<usize> {
+pub fn match_pattern(text: &str, pat: &str) -> Option<usize> {
     if !pat.contains('*') && !pat.contains('.') {
         // Fast path: literal substring match
         return text.find(pat);

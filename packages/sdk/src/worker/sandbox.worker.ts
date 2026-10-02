@@ -11,6 +11,7 @@ import initWasm, {
   vfs_symlink,
   rlm_session_create,
   rlm_session_push_context,
+  rlm_session_attach_opfs,
   rlm_session_init_query,
   rlm_session_step,
   rlm_session_feed_response,
@@ -43,6 +44,7 @@ let initialized = false;
 let wasmReady = false;
 let options: any = {};
 const pendingLlmResponses = new Map<string, (resp: string) => void>();
+const opfsSyncHandles = new Map<string, any>();
 
 // In-worker in-memory virtual filesystem fallback and bindings
 interface VfsNode {
@@ -531,6 +533,86 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         break;
       }
 
+      case 'rlm:attach_opfs': {
+        const { id, sessionId, path } = msg;
+        try {
+          await ensureWasm();
+          if (
+            typeof navigator === 'undefined' ||
+            !navigator.storage ||
+            !navigator.storage.getDirectory
+          ) {
+            self.postMessage({
+              type: 'rlm:response',
+              id,
+              error: 'OPFS is not supported in this browser environment',
+            } as WorkerOutboundMessage);
+            break;
+          }
+
+          const root = await navigator.storage.getDirectory();
+          const segments = path.split('/').filter(Boolean);
+          if (segments.length === 0) {
+            throw new Error(`Invalid OPFS path: ${path}`);
+          }
+          let dir = root;
+          for (let i = 0; i < segments.length - 1; i++) {
+            dir = await dir.getDirectoryHandle(segments[i], { create: false });
+          }
+          const fileName = segments[segments.length - 1];
+          const fileHandle = await dir.getFileHandle(fileName, { create: false });
+
+          // Attempt to open sync access handle with exponential backoff on NoModificationAllowedError
+          let syncHandle: any = null;
+          let retries = 5;
+          let delay = 25;
+
+          while (retries > 0) {
+            try {
+              // @ts-ignore
+              syncHandle = await fileHandle.createSyncAccessHandle();
+              break;
+            } catch (err: any) {
+              if (err?.name === 'NoModificationAllowedError' && retries > 1) {
+                await new Promise((r) => setTimeout(r, delay));
+                delay *= 2;
+                retries--;
+              } else {
+                throw err;
+              }
+            }
+          }
+
+          if (!syncHandle) {
+            throw new Error(`Failed to acquire OPFS sync access handle for ${path}`);
+          }
+
+          // Track handle for session
+          opfsSyncHandles.set(sessionId, syncHandle);
+
+          // Pass handle to WASM
+          rlm_session_attach_opfs(sessionId, syncHandle);
+
+          self.postMessage({
+            type: 'rlm:response',
+            id,
+            result: {
+              answer: '',
+              iterations: 0,
+              terminated_by: 'attach_opfs',
+              cost_estimate_tokens: 0,
+            },
+          } as WorkerOutboundMessage);
+        } catch (err: any) {
+          self.postMessage({
+            type: 'rlm:response',
+            id,
+            error: err?.message || String(err),
+          } as WorkerOutboundMessage);
+        }
+        break;
+      }
+
       case 'rlm:llm_response': {
         const { turnId, response } = msg;
         const resolver = pendingLlmResponses.get(turnId);
@@ -552,11 +634,18 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 
           while (true) {
             if (currentStep.status === 'needs_llm') {
+              const phase =
+                currentStep.role === 'sub'
+                  ? 'sub_query'
+                  : currentStep.turn_id?.includes('synthesize')
+                  ? 'synthesizing'
+                  : 'exploring';
+
               self.postMessage({
                 type: 'rlm:progress',
                 sessionId,
                 iteration: currentStep.iteration,
-                phase: 'llm_query',
+                phase,
               } as WorkerOutboundMessage);
 
               self.postMessage({
@@ -564,6 +653,8 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
                 sessionId,
                 turnId: currentStep.turn_id,
                 prompt: currentStep.prompt,
+                role: currentStep.role,
+                subId: currentStep.sub_id,
               } as WorkerOutboundMessage);
 
               const turnId = currentStep.turn_id;
@@ -610,6 +701,13 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         try {
           rlm_session_cancel(sessionId);
         } catch (_) {}
+        const handle = opfsSyncHandles.get(sessionId);
+        if (handle) {
+          try {
+            handle.close();
+          } catch (_) {}
+          opfsSyncHandles.delete(sessionId);
+        }
         break;
       }
 
@@ -618,6 +716,13 @@ self.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
         try {
           rlm_session_destroy(sessionId);
         } catch (_) {}
+        const handle = opfsSyncHandles.get(sessionId);
+        if (handle) {
+          try {
+            handle.close();
+          } catch (_) {}
+          opfsSyncHandles.delete(sessionId);
+        }
         break;
       }
 

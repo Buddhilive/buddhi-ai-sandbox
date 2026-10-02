@@ -127,6 +127,7 @@ fn test_rlm_session_step_transitions() {
             turn_id,
             prompt,
             iteration,
+            ..
         } => {
             assert_eq!(iteration, 1);
             assert!(prompt.contains("Explain entanglement"));
@@ -144,6 +145,7 @@ fn test_rlm_session_step_transitions() {
                     turn_id: turn2_id,
                     prompt: prompt2,
                     iteration: iter2,
+                    ..
                 } => {
                     assert_eq!(iter2, 2);
                     assert!(prompt2.contains("buffer ="));

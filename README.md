@@ -406,12 +406,44 @@ When running scripts via `node`, the sandbox provides standard Node.js global va
 
 ---
 
-### 6. Error Classes
+### 6. In-Browser Recursive Language Model (RLM) & OPFS
+
+The sandbox provides an in-browser Recursive Language Model runtime backed by Rust WebAssembly and the Origin Private File System (OPFS):
+
+- **Zero JS Heap Bloat**: Directly indexes and accesses 100MB+ files out-of-core via OPFS `createSyncAccessHandle()` inside the Web Worker.
+- **Explore & Recursive Subquery Protocol**: The root model drives document inspection via lightweight keywords (`PEEK`, `SEARCH`, `LINES`, `SET`, `GET`, `SUBQUERY`, `FINAL`, `FINAL_VAR`).
+- **Decoupled Architecture**: `@buddhilive/sandbox` does **NOT** import or bundle `@litert-lm/core`. Instead, host applications inject an inference callback (`llmFn(prompt, ctx)`), keeping the sandbox lightweight and model-engine agnostic.
+
+```typescript
+import { Sandbox, RlmSession } from '@buddhilive/sandbox';
+
+const sandbox = await Sandbox.create();
+const rlm = sandbox.createRlmSession({
+  mode: 'explore',
+  maxTurns: 10,
+  maxSubQueries: 5,
+});
+
+// Out-of-core ingestion via OPFS:
+await rlm.addContextFromOpfs('large_paper.txt');
+
+// Or in-memory text:
+// await rlm.addContext(rawText);
+
+const result = await rlm.run('Summarize the methodology', async (prompt, ctx) => {
+  // Injected host model inference (e.g. LiteRT, WebGPU, or remote model)
+  return await hostModel.generate(prompt);
+});
+
+console.log('Synthesized answer:', result.answer);
+```
+
+### 7. Error Classes
 
 The SDK exports dedicated error classes for granular runtime error inspection:
 
 ```typescript
-import { SandboxError, OOMError } from '@buddhilive/sandbox';
+import { SandboxError, OOMError, RlmError } from '@buddhilive/sandbox';
 
 try {
   await sandbox.process.exec('node /workspace/large-memory.js');

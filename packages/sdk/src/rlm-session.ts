@@ -62,6 +62,29 @@ export class RlmSession {
   }
 
   /**
+   * Attaches an OPFS document directly to the in-WASM context store
+   * using zero-copy synchronous access handles inside the worker.
+   */
+  public async addContextFromOpfs(path: string): Promise<void> {
+    if (this.isDisposed) throw new RlmError('Session has already been disposed', 'ERR_DISPOSED');
+    if (!this.initialized) {
+      await this.init();
+    }
+
+    if (!path || path.trim().length === 0) {
+      return;
+    }
+
+    const id = `opfs_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    await this.bridge.request({
+      type: 'rlm:attach_opfs',
+      id,
+      sessionId: this.sessionId,
+      path,
+    });
+  }
+
+  /**
    * Executes the RLM orchestration loop for a given query and LLM completion function.
    */
   public async run(query: string, llmFn: LlmQueryFn): Promise<RlmResult> {
@@ -79,7 +102,13 @@ export class RlmSession {
       const unsub = this.bridge.onMessage(async (msg: WorkerOutboundMessage) => {
         if (msg.type === 'rlm:llm_query' && msg.sessionId === this.sessionId) {
           try {
-            const response = await llmFn(msg.prompt);
+            const context =
+              msg.role || msg.subId
+                ? { role: msg.role, subId: msg.subId }
+                : undefined;
+            const response = await (context
+              ? llmFn(msg.prompt, context)
+              : llmFn(msg.prompt));
             this.bridge.postMessage({
               type: 'rlm:llm_response',
               sessionId: this.sessionId,

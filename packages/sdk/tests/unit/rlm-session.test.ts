@@ -211,5 +211,118 @@ describe('RlmSession SDK Client', () => {
     await expect(session.init()).resolves.toBeUndefined();
     await expect(session.addContext('Sample text for context ingestion')).resolves.toBeUndefined();
   });
+
+  it('posts rlm:attach_opfs when addContextFromOpfs is called and handles failure', async () => {
+    const inboundMessages: WorkerInboundMessage[] = [];
+
+    const mockBridge = {
+      request: vi.fn(async (msg: WorkerInboundMessage) => {
+        inboundMessages.push(msg);
+        if (msg.type === 'rlm:attach_opfs' && (msg as any).path === '/fail/path.txt') {
+          throw new RlmError('OPFS is not supported in this browser environment', 'ERR_OPFS_UNSUPPORTED');
+        }
+        return { answer: 'attached', iterations: 0, terminated_by: 'attach_opfs', cost_estimate_tokens: 0 };
+      }),
+      postMessage: vi.fn((msg: WorkerInboundMessage) => {
+        inboundMessages.push(msg);
+      }),
+      onMessage: vi.fn(() => () => {}),
+    } as unknown as WorkerBridge;
+
+    const session = new RlmSession(mockBridge, {}, 'test_opfs_session');
+    await session.init();
+
+    await session.addContextFromOpfs('/documents/paper.txt');
+
+    expect(
+      inboundMessages.some(
+        (m) => m.type === 'rlm:attach_opfs' && (m as any).path === '/documents/paper.txt'
+      )
+    ).toBe(true);
+
+    // Verify error is propagated when OPFS fails so caller/SDK can fall back
+    await expect(session.addContextFromOpfs('/fail/path.txt')).rejects.toThrow(
+      'OPFS is not supported'
+    );
+  });
+
+  it('runs explore mode end-to-end with subqueries and role-aware llmFn', async () => {
+    let capturedHandler: ((msg: WorkerOutboundMessage) => void) | null = null;
+    const postedResponses: WorkerInboundMessage[] = [];
+
+    const mockBridge = {
+      request: vi.fn(async () => ({})),
+      postMessage: vi.fn((msg: WorkerInboundMessage) => {
+        postedResponses.push(msg);
+      }),
+      onMessage: vi.fn((handler: (msg: WorkerOutboundMessage) => void) => {
+        capturedHandler = handler;
+        return () => {};
+      }),
+    } as unknown as WorkerBridge;
+
+    const session = new RlmSession(
+      mockBridge,
+      { mode: 'explore', maxTurns: 5, maxSubQueries: 3 },
+      'test_explore_session'
+    );
+    await session.init();
+
+    const turnsTracked: { prompt: string; role?: string }[] = [];
+    const scriptedLlm = vi.fn(async (prompt: string, ctx?: { role?: string; subId?: string }) => {
+      turnsTracked.push({ prompt, role: ctx?.role });
+      if (ctx?.role === 'sub') {
+        return 'The secret is ALPHA_KEY_42';
+      }
+      if (prompt.contains && prompt.contains('secret is ALPHA_KEY_42')) {
+        return 'FINAL("The secret is ALPHA_KEY_42")';
+      }
+      return 'SUBQUERY 100 200 "Extract the key" -> secret_var';
+    });
+
+    const runPromise = session.run('What is the key?', scriptedLlm);
+
+    // 1. Worker emits root query
+    capturedHandler?.({
+      type: 'rlm:llm_query',
+      sessionId: 'test_explore_session',
+      turnId: 'turn_exp_1',
+      prompt: 'Available Commands:\n- PEEK\n- SUBQUERY\nCommand:',
+      role: 'root',
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // 2. Worker emits subquery
+    capturedHandler?.({
+      type: 'rlm:llm_query',
+      sessionId: 'test_explore_session',
+      turnId: 'turn_exp_sub_1',
+      prompt: 'Context slice (bytes 100..200):\nExtract the key',
+      role: 'sub',
+      subId: 'sub_1',
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+
+    // 3. Worker emits completion
+    capturedHandler?.({
+      type: 'rlm:response',
+      id: (mockBridge.postMessage as any).mock.calls.find((c: any) => c[0].type === 'rlm:run')[0].id,
+      result: {
+        answer: 'The secret is ALPHA_KEY_42',
+        iterations: 2,
+        terminated_by: 'FINAL',
+        cost_estimate_tokens: 150,
+      },
+    });
+
+    const result = await runPromise;
+    expect(result.answer).toBe('The secret is ALPHA_KEY_42');
+    expect(turnsTracked.length).toBe(2);
+    expect(turnsTracked[0].role).toBe('root');
+    expect(turnsTracked[1].role).toBe('sub');
+  });
 });
+
 

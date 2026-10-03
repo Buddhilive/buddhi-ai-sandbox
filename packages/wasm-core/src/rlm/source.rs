@@ -94,7 +94,7 @@ impl ByteSource for OpfsSource {
         if offset >= self.size {
             return Ok(0);
         }
-        let mut opts = web_sys::FileSystemReadWriteOptions::new();
+        let opts = web_sys::FileSystemReadWriteOptions::new();
         opts.set_at(offset as f64);
         let bytes_read = self
             .handle
